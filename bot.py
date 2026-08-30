@@ -128,8 +128,20 @@ def main() -> None:
     app.add_handler(CommandHandler("myid", myid))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    log.info("Bot starting...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    external_url = os.environ.get("RENDER_EXTERNAL_URL")
+    if external_url:
+        port = int(os.environ.get("PORT", 10000))
+        log.info("Bot starting in webhook mode on port %s...", port)
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path=token,
+            webhook_url=f"{external_url}/{token}",
+            allowed_updates=Update.ALL_TYPES,
+        )
+    else:
+        log.info("Bot starting in polling mode...")
+        app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
