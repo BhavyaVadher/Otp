@@ -5,16 +5,21 @@ Message the bot with an email address and Gmail App Password (whitespace
 between them, in either order or on separate lines) and it replies with the
 most recent Amazon OTP found in that inbox.
 
-Required environment variables:
-  TELEGRAM_BOT_TOKEN     - token from @BotFather
-  ALLOWED_TELEGRAM_IDS   - comma-separated Telegram user IDs allowed to use
-                           the bot (recommended; leave unset to allow anyone,
-                           NOT recommended since credentials are involved)
+Environment variables:
+  TELEGRAM_BOT_TOKEN     - required, token from @BotFather
+  ALLOWED_TELEGRAM_IDS   - optional, comma-separated Telegram user IDs allowed
+                           to use the bot. Leave unset to allow anyone.
+  RATE_LIMIT_SECONDS     - optional, minimum seconds between requests from the
+                           same user (default 10), to slow down automated abuse.
+  MAX_USERS              - optional, max number of distinct Telegram users
+                           allowed to use the bot, first-come-first-served
+                           (default 5). Resets when the process restarts.
 """
 import asyncio
 import logging
 import os
 import re
+import time
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
@@ -25,6 +30,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger(__name__)
 
 EMAIL_RE = re.compile(r"[^\s]+@[^\s]+\.[^\s]+")
+
+RATE_LIMIT_SECONDS = float(os.environ.get("RATE_LIMIT_SECONDS", "10"))
+_last_request_at: dict[int, float] = {}
+
+MAX_USERS = int(os.environ.get("MAX_USERS", "5"))
+_seen_user_ids: set[int] = set()
 
 
 def _allowed_ids() -> set[int] | None:
@@ -74,6 +85,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("You're not authorized to use this bot.")
         log.warning("Rejected message from unauthorized user id=%s", user.id)
         return
+
+    if user.id not in _seen_user_ids:
+        if len(_seen_user_ids) >= MAX_USERS:
+            await update.message.reply_text(
+                "This bot is at capacity right now. Try again later."
+            )
+            log.warning("Rejected new user id=%s: at capacity (%s)", user.id, MAX_USERS)
+            return
+        _seen_user_ids.add(user.id)
+
+    now = time.monotonic()
+    last = _last_request_at.get(user.id)
+    if last is not None and now - last < RATE_LIMIT_SECONDS:
+        wait = RATE_LIMIT_SECONDS - (now - last)
+        await update.message.reply_text(f"Please wait {wait:.0f}s before trying again.")
+        return
+    _last_request_at[user.id] = now
 
     parsed = parse_credentials(update.message.text or "")
     if not parsed:
