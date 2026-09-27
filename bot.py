@@ -34,7 +34,7 @@ EMAIL_RE = re.compile(r"[^\s]+@[^\s]+\.[^\s]+")
 RATE_LIMIT_SECONDS = float(os.environ.get("RATE_LIMIT_SECONDS", "10"))
 _last_request_at: dict[int, float] = {}
 
-MAX_USERS = int(os.environ.get("MAX_USERS", "5"))
+MAX_USERS = int(os.environ.get("MAX_USERS", "10"))
 _seen_user_ids: set[int] = set()
 
 
@@ -124,7 +124,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
 
     try:
-        results = await asyncio.to_thread(fetch_latest_otp, gmail_address, app_password)
+        results = await asyncio.to_thread(
+            fetch_latest_otp, gmail_address, app_password, max_results=1
+        )
     except OtpFetchError as exc:
         await status.edit_text(str(exc))
         return
