@@ -28,6 +28,8 @@ from otp_core import OtpFetchError, fetch_latest_otp
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
+# httpx logs every request URL at INFO, and Telegram API URLs contain the bot token.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 EMAIL_RE = re.compile(r"[^\s]+@[^\s]+\.[^\s]+")
 
