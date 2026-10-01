@@ -4,7 +4,11 @@ Amazon OTP with one click. Also hosts the Telegram bot (bot.py) in the same
 process, so a single Render web service runs both.
 
 Environment variables:
-  ADMIN_USERNAME / ADMIN_PASSWORD - required, the login for the website
+  ADMIN_USERNAME / ADMIN_PASSWORD - required, the main admin login. Accounts
+                        saved before multi-admin support belong to this admin.
+  ADMINS              - optional, more admin logins as "user:password" pairs
+                        separated by commas, e.g. "priya:pass1,amit:pass2".
+                        Each admin only sees the accounts they added.
   SECRET_KEY          - required, long random string; signs the login cookie and
                         encrypts saved app passwords. Changing it makes saved
                         passwords unreadable.
@@ -53,6 +57,21 @@ EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
 if not (ADMIN_USERNAME and ADMIN_PASSWORD and SECRET_KEY):
     raise SystemExit("Set ADMIN_USERNAME, ADMIN_PASSWORD and SECRET_KEY environment variables.")
 
+
+def _load_admins() -> dict[str, str]:
+    admins = {ADMIN_USERNAME: ADMIN_PASSWORD}
+    for entry in os.environ.get("ADMINS", "").split(","):
+        username, sep, password = entry.strip().partition(":")
+        if not entry.strip():
+            continue
+        if not (sep and username.strip() and password):
+            raise SystemExit(f'ADMINS entry "{username}" must look like user:password.')
+        admins[username.strip()] = password
+    return admins
+
+
+ADMINS = _load_admins()
+
 WEBHOOK_PATH = "/telegram/webhook"
 WEBHOOK_SECRET = hashlib.sha256(f"webhook:{TELEGRAM_BOT_TOKEN}".encode()).hexdigest()
 
@@ -70,7 +89,7 @@ templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "t
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    db.init_db()
+    db.init_db(default_owner=ADMIN_USERNAME)
 
     telegram = None
     if TELEGRAM_BOT_TOKEN:
@@ -111,8 +130,21 @@ app.add_middleware(
 )
 
 
-def _logged_in(request: Request) -> bool:
-    return request.session.get("user") == ADMIN_USERNAME
+def _current_admin(request: Request) -> str | None:
+    """The logged-in admin's username, or None. Re-checked against ADMINS on
+    every request, so removing an admin from the settings logs them out."""
+    user = request.session.get("user")
+    return user if user in ADMINS else None
+
+
+def _check_login(username: str, password: str) -> bool:
+    ok = False
+    # Compare against every admin so the response time doesn't reveal which usernames exist.
+    for admin_user, admin_password in ADMINS.items():
+        user_ok = hmac.compare_digest(username.encode(), admin_user.encode())
+        pass_ok = hmac.compare_digest(password.encode(), admin_password.encode())
+        ok |= user_ok and pass_ok
+    return ok
 
 
 def _flash(request: Request, message: str, kind: str = "error") -> None:
@@ -132,7 +164,7 @@ def healthz():
 
 @app.get("/login")
 def login_page(request: Request):
-    if _logged_in(request):
+    if _current_admin(request):
         return RedirectResponse("/", status_code=303)
     return templates.TemplateResponse(
         request, "login.html", {"flash": request.session.pop("flash", None)}
@@ -147,9 +179,8 @@ def login(request: Request, username: str = Form(""), password: str = Form("")):
         _flash(request, "Too many failed attempts. Try again in 15 minutes.")
         return RedirectResponse("/login", status_code=303)
 
-    user_ok = hmac.compare_digest(username.encode(), ADMIN_USERNAME.encode())
-    pass_ok = hmac.compare_digest(password.encode(), ADMIN_PASSWORD.encode())
-    if not (user_ok and pass_ok):
+    username = username.strip()
+    if not _check_login(username, password):
         _login_failures[ip] = (failures + 1, time.monotonic())
         log.warning("Failed login from %s", ip)
         _flash(request, "Wrong username or password.")
@@ -157,7 +188,7 @@ def login(request: Request, username: str = Form(""), password: str = Form("")):
 
     _login_failures.pop(ip, None)
     request.session.clear()
-    request.session["user"] = ADMIN_USERNAME
+    request.session["user"] = username
     return RedirectResponse("/", status_code=303)
 
 
@@ -169,13 +200,15 @@ def logout(request: Request):
 
 @app.get("/")
 def index(request: Request):
-    if not _logged_in(request):
+    owner = _current_admin(request)
+    if owner is None:
         return RedirectResponse("/login", status_code=303)
     return templates.TemplateResponse(
         request,
         "index.html",
         {
-            "accounts": db.list_accounts(),
+            "accounts": db.list_accounts(owner),
+            "admin": owner,
             "flash": request.session.pop("flash", None),
             "amazon_login_url": AMAZON_LOGIN_URL,
         },
@@ -190,7 +223,8 @@ def add_account(
     app_password: str = Form(""),
     amazon_pin: str = Form(""),
 ):
-    if not _logged_in(request):
+    owner = _current_admin(request)
+    if owner is None:
         return RedirectResponse("/login", status_code=303)
 
     amazon_pin = amazon_pin.strip()
@@ -208,7 +242,7 @@ def add_account(
     else:
         try:
             check_login(email, app_password)
-            db.add_account(name, email, app_password, amazon_pin or None)
+            db.add_account(owner, name, email, app_password, amazon_pin or None)
             _flash(request, f"Saved {name}.", "success")
         except OtpFetchError as exc:
             _flash(request, f"Not saved - {exc}")
@@ -221,7 +255,8 @@ def add_account(
 def edit_account(
     request: Request, account_id: int, name: str = Form(""), amazon_pin: str = Form("")
 ):
-    if not _logged_in(request):
+    owner = _current_admin(request)
+    if owner is None:
         return RedirectResponse("/login", status_code=303)
 
     name = name.strip()
@@ -231,26 +266,28 @@ def edit_account(
     elif amazon_pin and not PIN_RE.match(amazon_pin):
         _flash(request, "Amazon PIN must be exactly 6 digits.")
     else:
-        db.update_account(account_id, name, amazon_pin or None)
+        db.update_account(owner, account_id, name, amazon_pin or None)
         _flash(request, f"Updated {name}.", "success")
     return RedirectResponse("/", status_code=303)
 
 
 @app.post("/accounts/{account_id}/delete")
 def delete_account(request: Request, account_id: int):
-    if not _logged_in(request):
+    owner = _current_admin(request)
+    if owner is None:
         return RedirectResponse("/login", status_code=303)
-    db.delete_account(account_id)
+    db.delete_account(owner, account_id)
     _flash(request, "Account removed.", "success")
     return RedirectResponse("/", status_code=303)
 
 
 @app.get("/api/accounts/{account_id}/otp")
 def account_otp(request: Request, account_id: int):
-    if not _logged_in(request):
+    owner = _current_admin(request)
+    if owner is None:
         return JSONResponse({"error": "Session expired - please log in again."}, status_code=401)
 
-    found = db.get_credentials(account_id)
+    found = db.get_credentials(owner, account_id)
     if found is None:
         return JSONResponse({"error": "Account not found."}, status_code=404)
     account, app_password = found

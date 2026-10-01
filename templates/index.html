@@ -46,7 +46,10 @@
 
 <header>
   <h1>OTP Desk</h1>
-  <form method="post" action="/logout"><button class="btn-plain" type="submit">Log out</button></form>
+  <form method="post" action="/logout">
+    <span class="muted">{{ admin }}</span>
+    <button class="btn-plain" type="submit">Log out</button>
+  </form>
 </header>
 
 {% if flash %}<div class="flash {{ flash.kind }}">{{ flash.message }}</div>{% endif %}

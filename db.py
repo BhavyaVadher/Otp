@@ -1,5 +1,6 @@
 """
-Storage for saved Gmail accounts.
+Storage for saved Gmail accounts. Each account belongs to one admin (owner)
+and is only visible to them.
 
 Uses Postgres when DATABASE_URL is set (e.g. a free Neon database in
 production), otherwise a local SQLite file (accounts.db) for development.
@@ -21,8 +22,9 @@ SQLITE_PATH = os.environ.get("SQLITE_PATH", "accounts.db")
 _POSTGRES_SCHEMA = """
 CREATE TABLE IF NOT EXISTS accounts (
     id SERIAL PRIMARY KEY,
+    owner TEXT,
     name TEXT NOT NULL,
-    email TEXT NOT NULL UNIQUE,
+    email TEXT NOT NULL,
     app_password_enc TEXT NOT NULL,
     amazon_pin_enc TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -32,8 +34,9 @@ CREATE TABLE IF NOT EXISTS accounts (
 _SQLITE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS accounts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner TEXT,
     name TEXT NOT NULL,
-    email TEXT NOT NULL UNIQUE,
+    email TEXT NOT NULL,
     app_password_enc TEXT NOT NULL,
     amazon_pin_enc TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -101,35 +104,58 @@ def _decrypt(value: str) -> str:
         ) from exc
 
 
-def init_db() -> None:
+def init_db(default_owner: str) -> None:
+    """Create or upgrade the table. Accounts saved before admins had separate
+    lists are given to default_owner."""
     with _connect() as conn:
         if DATABASE_URL:
             conn.execute(_POSTGRES_SCHEMA)
             conn.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS amazon_pin_enc TEXT")
+            conn.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS owner TEXT")
+            # Emails used to be unique across everyone; now they're unique per admin.
+            conn.execute("ALTER TABLE accounts DROP CONSTRAINT IF EXISTS accounts_email_key")
         else:
             conn.execute(_SQLITE_SCHEMA)
             columns = {row[1] for row in conn.execute("PRAGMA table_info(accounts)")}
             if "amazon_pin_enc" not in columns:
                 conn.execute("ALTER TABLE accounts ADD COLUMN amazon_pin_enc TEXT")
+            if "owner" not in columns:
+                conn.execute("ALTER TABLE accounts ADD COLUMN owner TEXT")
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS accounts_owner_email ON accounts (owner, email)"
+        )
+        conn.execute(_sql("UPDATE accounts SET owner = %s WHERE owner IS NULL"), (default_owner,))
 
 
-def list_accounts() -> list[Account]:
+def list_accounts(owner: str) -> list[Account]:
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT id, name, email, amazon_pin_enc FROM accounts ORDER BY lower(name)"
+            _sql(
+                "SELECT id, name, email, amazon_pin_enc FROM accounts "
+                "WHERE owner = %s ORDER BY lower(name)"
+            ),
+            (owner,),
         ).fetchall()
     return [Account(id, name, email, _decrypt(pin) if pin else None) for id, name, email, pin in rows]
 
 
-def add_account(name: str, email: str, app_password: str, amazon_pin: str | None = None) -> None:
+def add_account(
+    owner: str, name: str, email: str, app_password: str, amazon_pin: str | None = None
+) -> None:
     try:
         with _connect() as conn:
             conn.execute(
                 _sql(
-                    "INSERT INTO accounts (name, email, app_password_enc, amazon_pin_enc) "
-                    "VALUES (%s, %s, %s, %s)"
+                    "INSERT INTO accounts (owner, name, email, app_password_enc, amazon_pin_enc) "
+                    "VALUES (%s, %s, %s, %s, %s)"
                 ),
-                (name, email, _encrypt(app_password), _encrypt(amazon_pin) if amazon_pin else None),
+                (
+                    owner,
+                    name,
+                    email,
+                    _encrypt(app_password),
+                    _encrypt(amazon_pin) if amazon_pin else None,
+                ),
             )
     except Exception as exc:
         if _is_unique_violation(exc):
@@ -137,25 +163,33 @@ def add_account(name: str, email: str, app_password: str, amazon_pin: str | None
         raise
 
 
-def get_credentials(account_id: int) -> tuple[Account, str] | None:
+def get_credentials(owner: str, account_id: int) -> tuple[Account, str] | None:
     with _connect() as conn:
         row = conn.execute(
-            _sql("SELECT id, name, email, app_password_enc FROM accounts WHERE id = %s"),
-            (account_id,),
+            _sql(
+                "SELECT id, name, email, app_password_enc FROM accounts "
+                "WHERE id = %s AND owner = %s"
+            ),
+            (account_id, owner),
         ).fetchone()
     if row is None:
         return None
     return Account(row[0], row[1], row[2]), _decrypt(row[3])
 
 
-def update_account(account_id: int, name: str, amazon_pin: str | None) -> None:
+def update_account(owner: str, account_id: int, name: str, amazon_pin: str | None) -> None:
     with _connect() as conn:
         conn.execute(
-            _sql("UPDATE accounts SET name = %s, amazon_pin_enc = %s WHERE id = %s"),
-            (name, _encrypt(amazon_pin) if amazon_pin else None, account_id),
+            _sql(
+                "UPDATE accounts SET name = %s, amazon_pin_enc = %s "
+                "WHERE id = %s AND owner = %s"
+            ),
+            (name, _encrypt(amazon_pin) if amazon_pin else None, account_id, owner),
         )
 
 
-def delete_account(account_id: int) -> None:
+def delete_account(owner: str, account_id: int) -> None:
     with _connect() as conn:
-        conn.execute(_sql("DELETE FROM accounts WHERE id = %s"), (account_id,))
+        conn.execute(
+            _sql("DELETE FROM accounts WHERE id = %s AND owner = %s"), (account_id, owner)
+        )
