@@ -7,6 +7,8 @@ Environment variables:
   ADMINS              - admin logins as "user:password" pairs separated by
                         commas, e.g. "priya:pass1,amit:pass2". Each admin only
                         sees the accounts they added.
+  MAIN_ADMIN          - optional, the admin who gets "Copy to <admin>" buttons
+                        to copy their accounts into the other admins' lists.
   ADMIN_USERNAME / ADMIN_PASSWORD - optional, one more admin login (the
                         original single-admin setting). At least one admin
                         must be set via either setting.
@@ -76,6 +78,9 @@ def _load_admins() -> dict[str, str]:
 
 
 ADMINS = _load_admins()
+MAIN_ADMIN = os.environ.get("MAIN_ADMIN", "").strip()
+if MAIN_ADMIN and MAIN_ADMIN not in ADMINS:
+    log.warning("MAIN_ADMIN %r is not one of the admins - copy buttons are disabled.", MAIN_ADMIN)
 
 WEBHOOK_PATH = "/telegram/webhook"
 WEBHOOK_SECRET = hashlib.sha256(f"webhook:{TELEGRAM_BOT_TOKEN}".encode()).hexdigest()
@@ -215,6 +220,7 @@ def index(request: Request):
         {
             "accounts": db.list_accounts(owner),
             "admin": owner,
+            "copy_targets": _copy_targets(owner),
             "flash": request.session.pop("flash", None),
             "amazon_login_url": AMAZON_LOGIN_URL,
         },
@@ -274,6 +280,29 @@ def edit_account(
     else:
         db.update_account(owner, account_id, name, amazon_pin or None)
         _flash(request, f"Updated {name}.", "success")
+    return RedirectResponse("/", status_code=303)
+
+
+def _copy_targets(owner: str) -> list[str]:
+    if owner != MAIN_ADMIN:
+        return []
+    return [admin for admin in ADMINS if admin != owner]
+
+
+@app.post("/accounts/{account_id}/copy")
+def copy_account(request: Request, account_id: int, target: str = Form("")):
+    owner = _current_admin(request)
+    if owner is None:
+        return RedirectResponse("/login", status_code=303)
+    if target not in _copy_targets(owner):
+        _flash(request, "You can't copy accounts to that admin.")
+        return RedirectResponse("/", status_code=303)
+
+    result = db.copy_account(owner, account_id, target)
+    if result is None:
+        _flash(request, "Account not found.")
+    else:
+        _flash(request, f"{'Added to' if result == 'added' else 'Updated in'} {target}.", "success")
     return RedirectResponse("/", status_code=303)
 
 

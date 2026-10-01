@@ -188,6 +188,41 @@ def update_account(owner: str, account_id: int, name: str, amazon_pin: str | Non
         )
 
 
+def copy_account(owner: str, account_id: int, target_owner: str) -> str | None:
+    """Copy one of owner's accounts into target_owner's list, or refresh the
+    target's copy if it already has that email. Returns "added", "updated",
+    or None if owner has no such account."""
+    with _connect() as conn:
+        row = conn.execute(
+            _sql(
+                "SELECT name, email, app_password_enc, amazon_pin_enc FROM accounts "
+                "WHERE id = %s AND owner = %s"
+            ),
+            (account_id, owner),
+        ).fetchone()
+        if row is None:
+            return None
+        name, email, app_password_enc, amazon_pin_enc = row
+        # Encrypted values are copied as-is: every row uses the same key.
+        updated = conn.execute(
+            _sql(
+                "UPDATE accounts SET name = %s, app_password_enc = %s, amazon_pin_enc = %s "
+                "WHERE owner = %s AND email = %s"
+            ),
+            (name, app_password_enc, amazon_pin_enc, target_owner, email),
+        ).rowcount
+        if updated:
+            return "updated"
+        conn.execute(
+            _sql(
+                "INSERT INTO accounts (owner, name, email, app_password_enc, amazon_pin_enc) "
+                "VALUES (%s, %s, %s, %s, %s)"
+            ),
+            (target_owner, name, email, app_password_enc, amazon_pin_enc),
+        )
+        return "added"
+
+
 def delete_account(owner: str, account_id: int) -> None:
     with _connect() as conn:
         conn.execute(

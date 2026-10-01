@@ -36,7 +36,7 @@
   .otp-status { flex-basis: 100%; }
   .err { color: var(--error); }
 
-  .panel-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 10px; }
+  .panel-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; margin-top: 10px; }
   .panel-actions form { margin: 0; }
   .edit-form { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
   .edit-form .row { display: flex; gap: 8px; }
@@ -105,6 +105,12 @@
 
       <div class="panel-actions">
         <button class="btn-plain btn-sm refresh" type="button">Refresh</button>
+        {% for target in copy_targets %}
+        <form method="post" action="/accounts/{{ a.id }}/copy">
+          <input type="hidden" name="target" value="{{ target }}">
+          <button class="btn-plain btn-sm" type="submit">Copy to {{ target }}</button>
+        </form>
+        {% endfor %}
         <button class="btn-plain btn-sm edit" type="button">Edit</button>
         <form method="post" action="/accounts/{{ a.id }}/delete" class="delete-form">
           <button class="btn-plain btn-sm btn-danger" type="submit">Delete</button>
