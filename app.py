@@ -4,11 +4,12 @@ Amazon OTP with one click. Also hosts the Telegram bot (bot.py) in the same
 process, so a single Render web service runs both.
 
 Environment variables:
-  ADMIN_USERNAME / ADMIN_PASSWORD - required, the main admin login. Accounts
-                        saved before multi-admin support belong to this admin.
-  ADMINS              - optional, more admin logins as "user:password" pairs
-                        separated by commas, e.g. "priya:pass1,amit:pass2".
-                        Each admin only sees the accounts they added.
+  ADMINS              - admin logins as "user:password" pairs separated by
+                        commas, e.g. "priya:pass1,amit:pass2". Each admin only
+                        sees the accounts they added.
+  ADMIN_USERNAME / ADMIN_PASSWORD - optional, one more admin login (the
+                        original single-admin setting). At least one admin
+                        must be set via either setting.
   SECRET_KEY          - required, long random string; signs the login cookie and
                         encrypts saved app passwords. Changing it makes saved
                         passwords unreadable.
@@ -54,12 +55,14 @@ SECRET_KEY = os.environ.get("SECRET_KEY", "")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
 
-if not (ADMIN_USERNAME and ADMIN_PASSWORD and SECRET_KEY):
-    raise SystemExit("Set ADMIN_USERNAME, ADMIN_PASSWORD and SECRET_KEY environment variables.")
+if not SECRET_KEY:
+    raise SystemExit("Set the SECRET_KEY environment variable.")
 
 
 def _load_admins() -> dict[str, str]:
-    admins = {ADMIN_USERNAME: ADMIN_PASSWORD}
+    admins = {}
+    if ADMIN_USERNAME and ADMIN_PASSWORD:
+        admins[ADMIN_USERNAME] = ADMIN_PASSWORD
     for entry in os.environ.get("ADMINS", "").split(","):
         username, sep, password = entry.strip().partition(":")
         if not entry.strip():
@@ -67,6 +70,8 @@ def _load_admins() -> dict[str, str]:
         if not (sep and username.strip() and password):
             raise SystemExit(f'ADMINS entry "{username}" must look like user:password.')
         admins[username.strip()] = password
+    if not admins:
+        raise SystemExit("Set ADMINS (user:password,...) or ADMIN_USERNAME and ADMIN_PASSWORD.")
     return admins
 
 
@@ -89,7 +94,8 @@ templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "t
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    db.init_db(default_owner=ADMIN_USERNAME)
+    # Accounts saved before admins had separate lists go to the first admin.
+    db.init_db(default_owner=next(iter(ADMINS)))
 
     telegram = None
     if TELEGRAM_BOT_TOKEN:
