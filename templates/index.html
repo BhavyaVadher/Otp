@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% block body %}
+<style>
+  .accounts { list-style: none; margin: 0 0 20px; padding: 0; }
+  .account { background: var(--card); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 10px; }
+  .account-head {
+    display: flex; width: 100%; align-items: center; gap: 12px; padding: 14px 16px;
+    background: none; border: 0; color: inherit; text-align: left;
+  }
+  .account-head:hover .name { color: var(--accent); }
+  .name { font-weight: 600; }
+  .chev { margin-left: auto; color: var(--muted); transition: transform .15s; }
+  .account.open .chev { transform: rotate(90deg); }
+  .panel { padding: 0 16px 16px; }
+  .otp-box {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    background: var(--code-bg); border-radius: 10px; padding: 14px 16px;
+  }
+  .code { font: 700 28px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 3px; }
+  .otp-meta { flex-basis: 100%; }
+  .panel-actions { display: flex; justify-content: space-between; margin-top: 10px; }
+  .err { color: var(--error); }
+  details summary { cursor: pointer; font-weight: 600; }
+  details[open] summary { margin-bottom: 12px; }
+</style>
+
+<header>
+  <h1>OTP Desk</h1>
+  <form method="post" action="/logout"><button class="btn-plain" type="submit">Log out</button></form>
+</header>
+
+{% if flash %}<div class="flash {{ flash.kind }}">{{ flash.message }}</div>{% endif %}
+
+{% if accounts %}
+<ul class="accounts">
+  {% for a in accounts %}
+  <li class="account" data-id="{{ a.id }}">
+    <button class="account-head" type="button" aria-expanded="false">
+      <span>
+        <span class="name">{{ a.name }}</span><br>
+        <span class="muted">{{ a.email }}</span>
+      </span>
+      <span class="chev" aria-hidden="true">›</span>
+    </button>
+    <div class="panel" hidden>
+      <div class="otp-box"><span class="muted">Checking inbox…</span></div>
+      <div class="panel-actions">
+        <button class="btn-plain refresh" type="button">Refresh</button>
+        <form method="post" action="/accounts/{{ a.id }}/delete" class="delete-form">
+          <button class="btn-plain btn-danger" type="submit">Delete</button>
+        </form>
+      </div>
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="muted">No accounts saved yet. Add one below.</p>
+{% endif %}
+
+<details class="card" {% if not accounts %}open{% endif %}>
+  <summary>Add account</summary>
+  <form method="post" action="/accounts" id="add-form">
+    <label for="name">Name</label>
+    <input id="name" name="name" placeholder="e.g. Rahul" autocomplete="off">
+    <label for="email">Gmail address</label>
+    <input id="email" name="email" type="email" required autocomplete="off">
+    <label for="app_password">16-character App Password</label>
+    <input id="app_password" name="app_password" required autocomplete="off" placeholder="abcd efgh ijkl mnop">
+    <button class="btn" type="submit">Save</button>
+    <span class="muted" style="margin-left: 8px;">The login is checked before saving.</span>
+  </form>
+</details>
+
+<script>
+function ago(seconds) {
+  if (seconds < 60) return "just now";
+  const m = Math.floor(seconds / 60);
+  if (m < 60) return m + " min ago";
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + " hr ago";
+  return Math.floor(h / 24) + " day(s) ago";
+}
+
+function el(tag, cls, text) {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+async function loadOtp(item) {
+  const box = item.querySelector(".otp-box");
+  box.replaceChildren(el("span", "muted", "Checking inbox…"));
+  let data;
+  try {
+    const res = await fetch(`/api/accounts/${item.dataset.id}/otp`, { cache: "no-store" });
+    if (res.status === 401) { location.href = "/login"; return; }
+    data = await res.json();
+  } catch (e) {
+    data = { error: "Network error - try again." };
+  }
+  if (data.error) {
+    box.replaceChildren(el("span", "err", data.error));
+    return;
+  }
+  const code = el("span", "code", data.code || "—");
+  const nodes = [code];
+  if (data.code) {
+    const copy = el("button", "btn-plain", "Copy");
+    copy.type = "button";
+    copy.onclick = async () => {
+      await navigator.clipboard.writeText(data.code);
+      copy.textContent = "Copied";
+      setTimeout(() => (copy.textContent = "Copy"), 1500);
+    };
+    nodes.push(copy);
+  }
+  nodes.push(el("span", "muted otp-meta",
+    `${ago(data.age_seconds)} · ${data.when}` + (data.code ? "" : " · no code found in this email")));
+  box.replaceChildren(...nodes);
+}
+
+document.querySelectorAll(".account").forEach((item) => {
+  const head = item.querySelector(".account-head");
+  const panel = item.querySelector(".panel");
+  head.addEventListener("click", () => {
+    const opening = panel.hidden;
+    panel.hidden = !opening;
+    item.classList.toggle("open", opening);
+    head.setAttribute("aria-expanded", String(opening));
+    if (opening) loadOtp(item);
+  });
+  item.querySelector(".refresh").addEventListener("click", () => loadOtp(item));
+
+  const del = item.querySelector(".delete-form");
+  del.addEventListener("submit", (e) => {
+    const btn = del.querySelector("button");
+    if (btn.dataset.armed) return;
+    e.preventDefault();
+    btn.dataset.armed = "1";
+    btn.textContent = "Tap again to delete";
+    setTimeout(() => { delete btn.dataset.armed; btn.textContent = "Delete"; }, 3000);
+  });
+});
+
+document.getElementById("add-form").addEventListener("submit", (e) => {
+  const btn = e.target.querySelector("button");
+  btn.disabled = true;
+  btn.textContent = "Checking login…";
+});
+</script>
+{% endblock %}

@@ -89,6 +89,18 @@ def extract_code(subject: str, body: str) -> str | None:
     return match.group(1) if match else None
 
 
+def check_login(gmail_address: str, app_password: str) -> None:
+    """Raise OtpFetchError if the credentials can't log into Gmail."""
+    try:
+        imap = imaplib.IMAP4_SSL(IMAP_HOST)
+        imap.login(gmail_address, app_password)
+    except imaplib.IMAP4.error as exc:
+        raise OtpFetchError(f"Login failed: {exc}") from exc
+    except OSError as exc:
+        raise OtpFetchError(f"Could not connect to Gmail: {exc}") from exc
+    imap.logout()
+
+
 def fetch_latest_otp(
     gmail_address: str,
     app_password: str,

@@ -13,7 +13,7 @@ Environment variables:
                            same user (default 10), to slow down automated abuse.
   MAX_USERS              - optional, max number of distinct Telegram users
                            allowed to use the bot, first-come-first-served
-                           (default 5). Resets when the process restarts.
+                           (default 10). Resets when the process restarts.
 """
 import asyncio
 import logging
@@ -142,6 +142,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await status.edit_text("\n".join(lines))
 
 
+def build_application(token: str) -> Application:
+    app = Application.builder().token(token).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("myid", myid))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    return app
+
+
 def main() -> None:
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not token:
@@ -153,10 +161,7 @@ def main() -> None:
             "to check any Gmail inbox they have credentials for. Consider setting it."
         )
 
-    app = Application.builder().token(token).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("myid", myid))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app = build_application(token)
 
     external_url = os.environ.get("RENDER_EXTERNAL_URL")
     if external_url:

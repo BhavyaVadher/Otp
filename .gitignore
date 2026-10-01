@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 .env
 .claude/
+
+# Local SQLite database (used when DATABASE_URL is unset)
+accounts.db

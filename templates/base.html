@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>{% block title %}OTP Desk{% endblock %}</title>
+  <style>
+    :root {
+      --bg: #f5f6f8; --card: #fff; --text: #1c1f24; --muted: #6b7280;
+      --border: #e3e5e9; --accent: #2563eb; --accent-text: #fff;
+      --danger: #dc2626; --success-bg: #ecfdf3; --success: #067647;
+      --error-bg: #fef3f2; --error: #b42318; --code-bg: #f0f4ff;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #111317; --card: #1a1d23; --text: #e8eaed; --muted: #9aa1ab;
+        --border: #2c3038; --accent: #4f8bff; --accent-text: #fff;
+        --danger: #f87171; --success-bg: #0f2a1d; --success: #6ce9a6;
+        --error-bg: #2d1515; --error: #fda29b; --code-bg: #1d2740;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .wrap { max-width: 640px; margin: 0 auto; padding: 24px 16px 64px; }
+    header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+    h1 { font-size: 20px; margin: 0; }
+    h2 { font-size: 15px; margin: 0 0 12px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+    label { display: block; font-size: 13px; color: var(--muted); margin: 0 0 4px; }
+    input {
+      width: 100%; padding: 10px 12px; font: inherit; color: var(--text);
+      background: var(--bg); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px;
+    }
+    input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+    button { font: inherit; cursor: pointer; border-radius: 8px; }
+    .btn { padding: 10px 16px; border: 0; background: var(--accent); color: var(--accent-text); font-weight: 600; }
+    .btn:disabled { opacity: .6; cursor: default; }
+    .btn-plain { padding: 6px 10px; border: 1px solid var(--border); background: transparent; color: var(--text); }
+    .btn-danger { color: var(--danger); }
+    .flash { padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; }
+    .flash.error { background: var(--error-bg); color: var(--error); }
+    .flash.success { background: var(--success-bg); color: var(--success); }
+    .muted { color: var(--muted); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    {% block body %}{% endblock %}
+  </div>
+</body>
+</html>
