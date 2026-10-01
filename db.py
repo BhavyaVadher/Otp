@@ -3,8 +3,8 @@ Storage for saved Gmail accounts.
 
 Uses Postgres when DATABASE_URL is set (e.g. a free Neon database in
 production), otherwise a local SQLite file (accounts.db) for development.
-App passwords are encrypted with a key derived from SECRET_KEY before they
-are written, so a leaked database alone doesn't expose them.
+App passwords and Amazon PINs are encrypted with a key derived from SECRET_KEY
+before they are written, so a leaked database alone doesn't expose them.
 """
 import base64
 import hashlib
@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     name TEXT NOT NULL,
     email TEXT NOT NULL UNIQUE,
     app_password_enc TEXT NOT NULL,
+    amazon_pin_enc TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 )
 """
@@ -34,6 +35,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     name TEXT NOT NULL,
     email TEXT NOT NULL UNIQUE,
     app_password_enc TEXT NOT NULL,
+    amazon_pin_enc TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 )
 """
@@ -48,6 +50,7 @@ class Account:
     id: int
     name: str
     email: str
+    amazon_pin: str | None = None
 
 
 def _fernet() -> Fernet:
@@ -85,26 +88,48 @@ def _is_unique_violation(exc: Exception) -> bool:
     return type(exc).__name__ == "UniqueViolation"
 
 
+def _encrypt(value: str) -> str:
+    return _fernet().encrypt(value.encode()).decode()
+
+
+def _decrypt(value: str) -> str:
+    try:
+        return _fernet().decrypt(value.encode()).decode()
+    except InvalidToken as exc:
+        raise RuntimeError(
+            "Saved data can't be decrypted - was SECRET_KEY changed?"
+        ) from exc
+
+
 def init_db() -> None:
     with _connect() as conn:
-        conn.execute(_POSTGRES_SCHEMA if DATABASE_URL else _SQLITE_SCHEMA)
+        if DATABASE_URL:
+            conn.execute(_POSTGRES_SCHEMA)
+            conn.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS amazon_pin_enc TEXT")
+        else:
+            conn.execute(_SQLITE_SCHEMA)
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(accounts)")}
+            if "amazon_pin_enc" not in columns:
+                conn.execute("ALTER TABLE accounts ADD COLUMN amazon_pin_enc TEXT")
 
 
 def list_accounts() -> list[Account]:
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT id, name, email FROM accounts ORDER BY lower(name)"
+            "SELECT id, name, email, amazon_pin_enc FROM accounts ORDER BY lower(name)"
         ).fetchall()
-    return [Account(*row) for row in rows]
+    return [Account(id, name, email, _decrypt(pin) if pin else None) for id, name, email, pin in rows]
 
 
-def add_account(name: str, email: str, app_password: str) -> None:
-    encrypted = _fernet().encrypt(app_password.encode()).decode()
+def add_account(name: str, email: str, app_password: str, amazon_pin: str | None = None) -> None:
     try:
         with _connect() as conn:
             conn.execute(
-                _sql("INSERT INTO accounts (name, email, app_password_enc) VALUES (%s, %s, %s)"),
-                (name, email, encrypted),
+                _sql(
+                    "INSERT INTO accounts (name, email, app_password_enc, amazon_pin_enc) "
+                    "VALUES (%s, %s, %s, %s)"
+                ),
+                (name, email, _encrypt(app_password), _encrypt(amazon_pin) if amazon_pin else None),
             )
     except Exception as exc:
         if _is_unique_violation(exc):
@@ -120,13 +145,15 @@ def get_credentials(account_id: int) -> tuple[Account, str] | None:
         ).fetchone()
     if row is None:
         return None
-    try:
-        app_password = _fernet().decrypt(row[3].encode()).decode()
-    except InvalidToken as exc:
-        raise RuntimeError(
-            "Saved password can't be decrypted - was SECRET_KEY changed?"
-        ) from exc
-    return Account(row[0], row[1], row[2]), app_password
+    return Account(row[0], row[1], row[2]), _decrypt(row[3])
+
+
+def update_account(account_id: int, name: str, amazon_pin: str | None) -> None:
+    with _connect() as conn:
+        conn.execute(
+            _sql("UPDATE accounts SET name = %s, amazon_pin_enc = %s WHERE id = %s"),
+            (name, _encrypt(amazon_pin) if amazon_pin else None, account_id),
+        )
 
 
 def delete_account(account_id: int) -> None:

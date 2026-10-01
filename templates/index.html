@@ -12,14 +12,34 @@
   .chev { margin-left: auto; color: var(--muted); transition: transform .15s; }
   .account.open .chev { transform: rotate(90deg); }
   .panel { padding: 0 16px 16px; }
-  .otp-box {
-    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-    background: var(--code-bg); border-radius: 10px; padding: 14px 16px;
+
+  .steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+  .step {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
   }
-  .code { font: 700 28px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 3px; }
-  .otp-meta { flex-basis: 100%; }
-  .panel-actions { display: flex; justify-content: space-between; margin-top: 10px; }
+  .step-num {
+    flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+    background: var(--border); color: var(--muted); font-size: 12px; font-weight: 700;
+  }
+  .step-body { flex: 1; min-width: 0; }
+  .step-label { font-size: 12px; color: var(--muted); }
+  .step-value { font-weight: 600; overflow-wrap: anywhere; }
+  .step-actions { display: flex; gap: 6px; }
+  .step.otp { background: var(--code-bg); border-color: transparent; }
+  .code { font: 700 28px/1.1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 3px; }
+  .code.stale { opacity: .45; }
+  .step.otp.fresh .step-num { background: var(--success); color: var(--card); }
+  .pin { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 2px; }
+  .btn-sm { padding: 8px 12px; font-size: 14px; font-weight: 600; white-space: nowrap; }
+  a.btn { display: inline-block; text-decoration: none; }
+  .otp-status { flex-basis: 100%; }
   .err { color: var(--error); }
+
+  .panel-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 10px; }
+  .panel-actions form { margin: 0; }
+  .edit-form { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+  .edit-form .row { display: flex; gap: 8px; }
   details summary { cursor: pointer; font-weight: 600; }
   details[open] summary { margin-bottom: 12px; }
 </style>
@@ -34,7 +54,7 @@
 {% if accounts %}
 <ul class="accounts">
   {% for a in accounts %}
-  <li class="account" data-id="{{ a.id }}">
+  <li class="account" data-id="{{ a.id }}" data-email="{{ a.email }}" data-pin="{{ a.amazon_pin or '' }}">
     <button class="account-head" type="button" aria-expanded="false">
       <span>
         <span class="name">{{ a.name }}</span><br>
@@ -43,13 +63,62 @@
       <span class="chev" aria-hidden="true">›</span>
     </button>
     <div class="panel" hidden>
-      <div class="otp-box"><span class="muted">Checking inbox…</span></div>
+      <ol class="steps">
+        <li class="step">
+          <span class="step-num">1</span>
+          <div class="step-body">
+            <div class="step-label">Email</div>
+            <div class="step-value">{{ a.email }}</div>
+          </div>
+          <a class="btn btn-sm start-login" href="{{ amazon_login_url }}" target="_blank" rel="noopener">Copy &amp; open Amazon</a>
+        </li>
+        <li class="step">
+          <span class="step-num">2</span>
+          <div class="step-body">
+            <div class="step-label">6-digit PIN</div>
+            {% if a.amazon_pin %}
+            <div class="step-value pin">••••••</div>
+            {% else %}
+            <div class="muted">No PIN saved - tap Edit to add it</div>
+            {% endif %}
+          </div>
+          {% if a.amazon_pin %}
+          <div class="step-actions">
+            <button class="btn-plain btn-sm show-pin" type="button">Show</button>
+            <button class="btn btn-sm copy-pin" type="button">Copy</button>
+          </div>
+          {% endif %}
+        </li>
+        <li class="step otp">
+          <span class="step-num">3</span>
+          <div class="step-body">
+            <div class="step-label">OTP</div>
+            <span class="code">—</span>
+          </div>
+          <button class="btn btn-sm copy-otp" type="button" hidden>Copy</button>
+          <span class="muted otp-status">Checking inbox…</span>
+        </li>
+      </ol>
+
       <div class="panel-actions">
-        <button class="btn-plain refresh" type="button">Refresh</button>
+        <button class="btn-plain btn-sm refresh" type="button">Refresh</button>
+        <button class="btn-plain btn-sm edit" type="button">Edit</button>
         <form method="post" action="/accounts/{{ a.id }}/delete" class="delete-form">
-          <button class="btn-plain btn-danger" type="submit">Delete</button>
+          <button class="btn-plain btn-sm btn-danger" type="submit">Delete</button>
         </form>
       </div>
+
+      <form class="edit-form" method="post" action="/accounts/{{ a.id }}/edit" hidden>
+        <label for="name-{{ a.id }}">Name</label>
+        <input id="name-{{ a.id }}" name="name" value="{{ a.name }}" required autocomplete="off">
+        <label for="pin-{{ a.id }}">6-digit Amazon PIN (leave empty to remove)</label>
+        <input id="pin-{{ a.id }}" name="amazon_pin" value="{{ a.amazon_pin or '' }}"
+               inputmode="numeric" pattern="\d{6}" maxlength="6" autocomplete="off">
+        <div class="row">
+          <button class="btn" type="submit">Save</button>
+          <button class="btn-plain cancel-edit" type="button">Cancel</button>
+        </div>
+      </form>
     </div>
   </li>
   {% endfor %}
@@ -67,12 +136,20 @@
     <input id="email" name="email" type="email" required autocomplete="off">
     <label for="app_password">16-character App Password</label>
     <input id="app_password" name="app_password" required autocomplete="off" placeholder="abcd efgh ijkl mnop">
+    <label for="amazon_pin">6-digit Amazon PIN (optional)</label>
+    <input id="amazon_pin" name="amazon_pin" inputmode="numeric" pattern="\d{6}" maxlength="6" autocomplete="off">
     <button class="btn" type="submit">Save</button>
-    <span class="muted" style="margin-left: 8px;">The login is checked before saving.</span>
+    <span class="muted" style="margin-left: 8px;">The Gmail login is checked before saving.</span>
   </form>
 </details>
 
 <script>
+const POLL_MS = 5000;
+const POLL_LIMIT_MS = 3 * 60 * 1000;
+// An OTP email this much older than the "open Amazon" tap still counts as new
+// (covers small clock differences between Amazon, Gmail and this phone).
+const FRESH_SLACK_MS = 60 * 1000;
+
 function ago(seconds) {
   if (seconds < 60) return "just now";
   const m = Math.floor(seconds / 60);
@@ -82,56 +159,132 @@ function ago(seconds) {
   return Math.floor(h / 24) + " day(s) ago";
 }
 
-function el(tag, cls, text) {
-  const node = document.createElement(tag);
-  if (cls) node.className = cls;
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
-
-async function loadOtp(item) {
-  const box = item.querySelector(".otp-box");
-  box.replaceChildren(el("span", "muted", "Checking inbox…"));
-  let data;
+async function copyText(button, text) {
   try {
-    const res = await fetch(`/api/accounts/${item.dataset.id}/otp`, { cache: "no-store" });
-    if (res.status === 401) { location.href = "/login"; return; }
-    data = await res.json();
+    await navigator.clipboard.writeText(text);
+    const label = button.textContent;
+    button.textContent = "Copied";
+    setTimeout(() => (button.textContent = label), 1500);
   } catch (e) {
-    data = { error: "Network error - try again." };
+    button.textContent = "Copy failed";
   }
-  if (data.error) {
-    box.replaceChildren(el("span", "err", data.error));
-    return;
-  }
-  const code = el("span", "code", data.code || "—");
-  const nodes = [code];
-  if (data.code) {
-    const copy = el("button", "btn-plain", "Copy");
-    copy.type = "button";
-    copy.onclick = async () => {
-      await navigator.clipboard.writeText(data.code);
-      copy.textContent = "Copied";
-      setTimeout(() => (copy.textContent = "Copy"), 1500);
-    };
-    nodes.push(copy);
-  }
-  nodes.push(el("span", "muted otp-meta",
-    `${ago(data.age_seconds)} · ${data.when}` + (data.code ? "" : " · no code found in this email")));
-  box.replaceChildren(...nodes);
 }
 
 document.querySelectorAll(".account").forEach((item) => {
   const head = item.querySelector(".account-head");
   const panel = item.querySelector(".panel");
+  const otpStep = item.querySelector(".step.otp");
+  const codeEl = otpStep.querySelector(".code");
+  const statusEl = otpStep.querySelector(".otp-status");
+  const copyOtp = otpStep.querySelector(".copy-otp");
+  const state = { code: null, startedAt: null, timer: null, inFlight: false };
+
+  function stopPolling() {
+    clearInterval(state.timer);
+    state.timer = null;
+    state.startedAt = null;
+  }
+
+  async function loadOtp() {
+    if (state.inFlight) return;
+    state.inFlight = true;
+    if (!state.code) statusEl.textContent = "Checking inbox…";
+    let data;
+    try {
+      const res = await fetch(`/api/accounts/${item.dataset.id}/otp`, { cache: "no-store" });
+      if (res.status === 401) { location.href = "/login"; return; }
+      data = await res.json();
+    } catch (e) {
+      data = { error: "Network error - retrying." };
+    } finally {
+      state.inFlight = false;
+    }
+
+    const waiting = state.startedAt !== null;
+    if (waiting && Date.now() - state.startedAt > POLL_LIMIT_MS) {
+      stopPolling();
+      statusEl.className = "muted otp-status";
+      statusEl.textContent = "No new code after 3 minutes. Tap Refresh to check again.";
+      return;
+    }
+
+    if (data.error) {
+      if (waiting) {
+        statusEl.className = "muted otp-status";
+        statusEl.textContent = "Waiting for the OTP email… checking every 5s";
+      } else {
+        statusEl.className = "err otp-status";
+        statusEl.textContent = data.error;
+      }
+      return;
+    }
+
+    const fresh = !waiting || data.timestamp * 1000 >= state.startedAt - FRESH_SLACK_MS;
+    state.code = data.code;
+    codeEl.textContent = data.code || "—";
+    codeEl.classList.toggle("stale", !fresh);
+    copyOtp.hidden = !data.code || !fresh;
+    otpStep.classList.toggle("fresh", waiting && fresh);
+    statusEl.className = "muted otp-status";
+
+    if (waiting && !fresh) {
+      statusEl.textContent = "Waiting for a new code… checking every 5s";
+      return;
+    }
+    if (waiting) stopPolling();
+    statusEl.textContent = `${ago(data.age_seconds)} · ${data.when}` +
+      (data.code ? "" : " · no code found in this email");
+  }
+
+  function startPolling() {
+    stopPolling();
+    state.startedAt = Date.now();
+    otpStep.classList.remove("fresh");
+    copyOtp.hidden = true;
+    codeEl.classList.add("stale");
+    statusEl.className = "muted otp-status";
+    statusEl.textContent = "Waiting for a new code… checking every 5s";
+    state.timer = setInterval(loadOtp, POLL_MS);
+    loadOtp();
+  }
+
   head.addEventListener("click", () => {
     const opening = panel.hidden;
     panel.hidden = !opening;
     item.classList.toggle("open", opening);
     head.setAttribute("aria-expanded", String(opening));
-    if (opening) loadOtp(item);
+    if (opening) loadOtp();
+    else stopPolling();
   });
-  item.querySelector(".refresh").addEventListener("click", () => loadOtp(item));
+
+  // Step 1: copy the email, let the link open Amazon in a new tab, and start
+  // watching the inbox for the code Amazon is about to send.
+  item.querySelector(".start-login").addEventListener("click", (e) => {
+    copyText(e.currentTarget, item.dataset.email);
+    startPolling();
+  });
+
+  const showPin = item.querySelector(".show-pin");
+  if (showPin) {
+    const pinEl = item.querySelector(".pin");
+    showPin.addEventListener("click", () => {
+      const hidden = pinEl.textContent.startsWith("•");
+      pinEl.textContent = hidden ? item.dataset.pin : "••••••";
+      showPin.textContent = hidden ? "Hide" : "Show";
+    });
+    item.querySelector(".copy-pin").addEventListener("click", (e) =>
+      copyText(e.currentTarget, item.dataset.pin));
+  }
+
+  copyOtp.addEventListener("click", () => state.code && copyText(copyOtp, state.code));
+  item.querySelector(".refresh").addEventListener("click", () => {
+    if (state.startedAt === null) loadOtp();
+    else startPolling();
+  });
+
+  const editForm = item.querySelector(".edit-form");
+  item.querySelector(".edit").addEventListener("click", () => (editForm.hidden = !editForm.hidden));
+  item.querySelector(".cancel-edit").addEventListener("click", () => (editForm.hidden = true));
 
   const del = item.querySelector(".delete-form");
   del.addEventListener("submit", (e) => {
@@ -141,6 +294,11 @@ document.querySelectorAll(".account").forEach((item) => {
     btn.dataset.armed = "1";
     btn.textContent = "Tap again to delete";
     setTimeout(() => { delete btn.dataset.armed; btn.textContent = "Delete"; }, 3000);
+  });
+
+  // Coming back from the Amazon tab: check right away instead of waiting for the next tick.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && state.startedAt !== null) loadOtp();
   });
 });
 

@@ -57,6 +57,8 @@ WEBHOOK_PATH = "/telegram/webhook"
 WEBHOOK_SECRET = hashlib.sha256(f"webhook:{TELEGRAM_BOT_TOKEN}".encode()).hexdigest()
 
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+PIN_RE = re.compile(r"^\d{6}$")
+AMAZON_LOGIN_URL = "https://auth.hiring.amazon.com/#/login"
 
 # Brute-force protection for the login form: per-IP failure count.
 MAX_LOGIN_FAILURES = 5
@@ -172,7 +174,11 @@ def index(request: Request):
     return templates.TemplateResponse(
         request,
         "index.html",
-        {"accounts": db.list_accounts(), "flash": request.session.pop("flash", None)},
+        {
+            "accounts": db.list_accounts(),
+            "flash": request.session.pop("flash", None),
+            "amazon_login_url": AMAZON_LOGIN_URL,
+        },
     )
 
 
@@ -182,10 +188,12 @@ def add_account(
     name: str = Form(""),
     email: str = Form(""),
     app_password: str = Form(""),
+    amazon_pin: str = Form(""),
 ):
     if not _logged_in(request):
         return RedirectResponse("/login", status_code=303)
 
+    amazon_pin = amazon_pin.strip()
     email = email.strip().lower()
     name = name.strip() or email
     # Google shows app passwords as 'abcd efgh ijkl mnop'; they're used without spaces.
@@ -195,15 +203,36 @@ def add_account(
         _flash(request, "That doesn't look like a valid email address.")
     elif len(app_password) != 16:
         _flash(request, "App password must be 16 characters (spaces are ignored).")
+    elif amazon_pin and not PIN_RE.match(amazon_pin):
+        _flash(request, "Amazon PIN must be exactly 6 digits.")
     else:
         try:
             check_login(email, app_password)
-            db.add_account(name, email, app_password)
+            db.add_account(name, email, app_password, amazon_pin or None)
             _flash(request, f"Saved {name}.", "success")
         except OtpFetchError as exc:
             _flash(request, f"Not saved - {exc}")
         except db.DuplicateAccountError as exc:
             _flash(request, str(exc))
+    return RedirectResponse("/", status_code=303)
+
+
+@app.post("/accounts/{account_id}/edit")
+def edit_account(
+    request: Request, account_id: int, name: str = Form(""), amazon_pin: str = Form("")
+):
+    if not _logged_in(request):
+        return RedirectResponse("/login", status_code=303)
+
+    name = name.strip()
+    amazon_pin = amazon_pin.strip()
+    if not name:
+        _flash(request, "Name can't be empty.")
+    elif amazon_pin and not PIN_RE.match(amazon_pin):
+        _flash(request, "Amazon PIN must be exactly 6 digits.")
+    else:
+        db.update_account(account_id, name, amazon_pin or None)
+        _flash(request, f"Updated {name}.", "success")
     return RedirectResponse("/", status_code=303)
 
 
@@ -238,6 +267,7 @@ def account_otp(request: Request, account_id: int):
     age = (datetime.now(timezone.utc) - latest.when).total_seconds()
     return {
         "code": latest.code,
+        "timestamp": int(latest.when.timestamp()),
         "subject": latest.subject,
         "when": latest.when.strftime("%b %d, %I:%M:%S %p %Z"),
         "age_seconds": max(0, int(age)),
