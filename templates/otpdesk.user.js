@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OTP Desk - Amazon.ca autofill
 // @namespace    otp-desk
-// @version      1.0
+// @version      1.1
 // @description  After "Copy & open Amazon.ca" on OTP Desk, fills that client's email and PIN on the Amazon hiring login, then stops.
 // @match        {{ site }}/*
 // @match        https://hiring.amazon.ca/*
@@ -23,20 +23,41 @@
   const MAX_AGE_MS = 3 * 60 * 1000;
   const WATCH_MS = 90 * 1000;
 
+  // A small status message at the bottom of the screen, so you can see what
+  // the script is doing (or why it isn't) - handy on a phone.
+  let statusEl = null;
+  let hideTimer = null;
+  function status(text, { hideAfter = 0, error = false } = {}) {
+    if (!statusEl) {
+      statusEl = document.createElement("div");
+      statusEl.style.cssText =
+        "position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px));" +
+        "z-index:2147483647;padding:10px 14px;border-radius:10px;font:600 14px/1.3 -apple-system,sans-serif;" +
+        "color:#fff;box-shadow:0 4px 16px rgba(0,0,0,.35);pointer-events:none;text-align:center";
+      (document.body || document.documentElement).appendChild(statusEl);
+    }
+    statusEl.style.background = error ? "#b42318" : "#1f2937";
+    statusEl.textContent = "OTP Desk: " + text;
+    statusEl.style.display = "block";
+    clearTimeout(hideTimer);
+    if (hideAfter) hideTimer = setTimeout(() => (statusEl.style.display = "none"), hideAfter);
+  }
+
   // --- On OTP Desk: remember which client's login was just started. ---
   if (location.origin === SITE) {
     document.documentElement.dataset.otpAutofill = "1";
     document.addEventListener(
       "click",
-      (event) => {
+      async (event) => {
         const link = event.target.closest(".start-login");
         if (!link) return;
         const client = link.closest(".account");
-        GM.setValue(KEY, JSON.stringify({
+        await GM.setValue(KEY, JSON.stringify({
           email: client.dataset.email,
           pin: client.dataset.pin || "",
           at: Date.now(),
         }));
+        status(`autofill ready for ${client.dataset.email}`, { hideAfter: 4000 });
       },
       true
     );
@@ -89,14 +110,24 @@
     } catch (e) {
       pending = null;
     }
-    if (!pending || Date.now() - pending.at > MAX_AGE_MS) return;
+    if (!pending) {
+      status('no login started - tap "Copy & open Amazon.ca" on OTP Desk first', { hideAfter: 5000 });
+      return;
+    }
+    if (Date.now() - pending.at > MAX_AGE_MS) {
+      status("that login was started over 3 minutes ago - start it again", { hideAfter: 5000, error: true });
+      await GM.deleteValue(KEY);
+      return;
+    }
 
     let emailDone = false;
     const started = Date.now();
+    status("waiting for the email box… (accept or close any cookie popup)");
     const timer = setInterval(async () => {
       if (Date.now() - started > WATCH_MS) {
         clearInterval(timer);
         await GM.deleteValue(KEY);
+        status(emailDone ? "couldn't find the PIN box" : "couldn't find the email box", { error: true });
         return;
       }
 
@@ -108,6 +139,9 @@
         if (!pending.pin) {
           clearInterval(timer);
           await GM.deleteValue(KEY);
+          status("email filled - no PIN saved for this client", { hideAfter: 5000 });
+        } else {
+          status("email filled, continuing…");
         }
         setTimeout(() => {
           const next = document.querySelector('[data-test-id="button-continue"]');
@@ -122,6 +156,7 @@
       // Stop here: the person reviews and continues, then enters the OTP.
       clearInterval(timer);
       await GM.deleteValue(KEY);
+      status("PIN filled ✓ - continue, then paste the OTP", { hideAfter: 6000 });
     }, 300);
   }
 
