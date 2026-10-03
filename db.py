@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     email TEXT NOT NULL,
     app_password_enc TEXT NOT NULL,
     amazon_pin_enc TEXT,
+    login_error TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 )
 """
@@ -39,6 +40,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     email TEXT NOT NULL,
     app_password_enc TEXT NOT NULL,
     amazon_pin_enc TEXT,
+    login_error TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 )
 """
@@ -55,6 +57,7 @@ class Account:
     email: str
     amazon_pin: str | None = None
     app_password: str | None = None
+    login_error: str | None = None
 
 
 def _fernet() -> Fernet:
@@ -113,6 +116,7 @@ def init_db(default_owner: str) -> None:
             conn.execute(_POSTGRES_SCHEMA)
             conn.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS amazon_pin_enc TEXT")
             conn.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS owner TEXT")
+            conn.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS login_error TEXT")
             # Emails used to be unique across everyone; now they're unique per admin.
             conn.execute("ALTER TABLE accounts DROP CONSTRAINT IF EXISTS accounts_email_key")
         else:
@@ -122,6 +126,8 @@ def init_db(default_owner: str) -> None:
                 conn.execute("ALTER TABLE accounts ADD COLUMN amazon_pin_enc TEXT")
             if "owner" not in columns:
                 conn.execute("ALTER TABLE accounts ADD COLUMN owner TEXT")
+            if "login_error" not in columns:
+                conn.execute("ALTER TABLE accounts ADD COLUMN login_error TEXT")
         conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS accounts_owner_email ON accounts (owner, email)"
         )
@@ -132,26 +138,32 @@ def list_accounts(owner: str) -> list[Account]:
     with _connect() as conn:
         rows = conn.execute(
             _sql(
-                "SELECT id, name, email, amazon_pin_enc, app_password_enc FROM accounts "
-                "WHERE owner = %s ORDER BY lower(name)"
+                "SELECT id, name, email, amazon_pin_enc, app_password_enc, login_error "
+                "FROM accounts WHERE owner = %s ORDER BY lower(name)"
             ),
             (owner,),
         ).fetchall()
     return [
-        Account(id, name, email, _decrypt(pin) if pin else None, _decrypt(app_password))
-        for id, name, email, pin, app_password in rows
+        Account(id, name, email, _decrypt(pin) if pin else None, _decrypt(app_password), error)
+        for id, name, email, pin, app_password, error in rows
     ]
 
 
 def add_account(
-    owner: str, name: str, email: str, app_password: str, amazon_pin: str | None = None
+    owner: str,
+    name: str,
+    email: str,
+    app_password: str,
+    amazon_pin: str | None = None,
+    login_error: str | None = None,
 ) -> None:
     try:
         with _connect() as conn:
             conn.execute(
                 _sql(
-                    "INSERT INTO accounts (owner, name, email, app_password_enc, amazon_pin_enc) "
-                    "VALUES (%s, %s, %s, %s, %s)"
+                    "INSERT INTO accounts "
+                    "(owner, name, email, app_password_enc, amazon_pin_enc, login_error) "
+                    "VALUES (%s, %s, %s, %s, %s, %s)"
                 ),
                 (
                     owner,
@@ -159,6 +171,7 @@ def add_account(
                     email,
                     _encrypt(app_password),
                     _encrypt(amazon_pin) if amazon_pin else None,
+                    login_error,
                 ),
             )
     except Exception as exc:
@@ -181,14 +194,38 @@ def get_credentials(owner: str, account_id: int) -> tuple[Account, str] | None:
     return Account(row[0], row[1], row[2]), _decrypt(row[3])
 
 
-def update_account(owner: str, account_id: int, name: str, amazon_pin: str | None) -> None:
+def update_account(
+    owner: str,
+    account_id: int,
+    name: str,
+    email: str,
+    amazon_pin: str | None,
+    app_password: str | None = None,
+) -> None:
+    """Update a saved account. app_password=None keeps the current one."""
+    sets = "name = %s, email = %s, amazon_pin_enc = %s"
+    params = [name, email, _encrypt(amazon_pin) if amazon_pin else None]
+    if app_password is not None:
+        sets += ", app_password_enc = %s"
+        params.append(_encrypt(app_password))
+    try:
+        with _connect() as conn:
+            conn.execute(
+                _sql(f"UPDATE accounts SET {sets} WHERE id = %s AND owner = %s"),
+                (*params, account_id, owner),
+            )
+    except Exception as exc:
+        if _is_unique_violation(exc):
+            raise DuplicateAccountError(f"{email} is already saved.") from exc
+        raise
+
+
+def set_login_error(owner: str, account_id: int, error: str | None) -> None:
+    """Remember (or clear, with None) that Gmail rejected this account's login."""
     with _connect() as conn:
         conn.execute(
-            _sql(
-                "UPDATE accounts SET name = %s, amazon_pin_enc = %s "
-                "WHERE id = %s AND owner = %s"
-            ),
-            (name, _encrypt(amazon_pin) if amazon_pin else None, account_id, owner),
+            _sql("UPDATE accounts SET login_error = %s WHERE id = %s AND owner = %s"),
+            (error, account_id, owner),
         )
 
 
@@ -199,30 +236,31 @@ def copy_account(owner: str, account_id: int, target_owner: str) -> str | None:
     with _connect() as conn:
         row = conn.execute(
             _sql(
-                "SELECT name, email, app_password_enc, amazon_pin_enc FROM accounts "
+                "SELECT name, email, app_password_enc, amazon_pin_enc, login_error FROM accounts "
                 "WHERE id = %s AND owner = %s"
             ),
             (account_id, owner),
         ).fetchone()
         if row is None:
             return None
-        name, email, app_password_enc, amazon_pin_enc = row
+        name, email, app_password_enc, amazon_pin_enc, login_error = row
         # Encrypted values are copied as-is: every row uses the same key.
         updated = conn.execute(
             _sql(
-                "UPDATE accounts SET name = %s, app_password_enc = %s, amazon_pin_enc = %s "
-                "WHERE owner = %s AND email = %s"
+                "UPDATE accounts SET name = %s, app_password_enc = %s, amazon_pin_enc = %s, "
+                "login_error = %s WHERE owner = %s AND email = %s"
             ),
-            (name, app_password_enc, amazon_pin_enc, target_owner, email),
+            (name, app_password_enc, amazon_pin_enc, login_error, target_owner, email),
         ).rowcount
         if updated:
             return "updated"
         conn.execute(
             _sql(
-                "INSERT INTO accounts (owner, name, email, app_password_enc, amazon_pin_enc) "
-                "VALUES (%s, %s, %s, %s, %s)"
+                "INSERT INTO accounts "
+                "(owner, name, email, app_password_enc, amazon_pin_enc, login_error) "
+                "VALUES (%s, %s, %s, %s, %s, %s)"
             ),
-            (target_owner, name, email, app_password_enc, amazon_pin_enc),
+            (target_owner, name, email, app_password_enc, amazon_pin_enc, login_error),
         )
         return "added"
 

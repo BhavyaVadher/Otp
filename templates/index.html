@@ -34,6 +34,10 @@
     font-weight: 700; font-size: 15px; color: #fff; background: hsl(var(--hue, 220) 55% 50%);
   }
   .who-text { min-width: 0; flex: 1; }
+  .badge-error {
+    display: inline-block; margin-top: 3px; padding: 1px 8px; border-radius: 999px;
+    background: var(--error-bg); color: var(--error); font-size: 12px; font-weight: 600;
+  }
   .name { font-weight: 600; display: block; }
   .email { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .chev { color: var(--muted); transition: transform .15s; }
@@ -123,6 +127,7 @@
       <span class="who-text">
         <span class="name">{{ a.name|title }}</span>
         <span class="muted email">{{ a.email }}</span>
+        <span class="badge-error" {% if not a.login_error %}hidden{% endif %}>Wrong 16-digit code</span>
       </span>
       <span class="chev" aria-hidden="true">›</span>
     </button>
@@ -183,6 +188,10 @@
       <form class="edit-form" method="post" action="/accounts/{{ a.id }}/edit" hidden>
         <label for="name-{{ a.id }}">Name</label>
         <input id="name-{{ a.id }}" name="name" value="{{ a.name }}" required autocomplete="off">
+        <label for="email-{{ a.id }}">Gmail address</label>
+        <input id="email-{{ a.id }}" name="email" type="email" value="{{ a.email }}" required autocomplete="off">
+        <label for="code-{{ a.id }}">New 16-digit code (leave empty to keep the current one)</label>
+        <input id="code-{{ a.id }}" name="app_password" autocomplete="off" placeholder="abcd efgh ijkl mnop">
         <label for="pin-{{ a.id }}">6-digit Amazon PIN (leave empty to remove)</label>
         <input id="pin-{{ a.id }}" name="amazon_pin" value="{{ a.amazon_pin or '' }}"
                inputmode="numeric" pattern="\d{6}" maxlength="6" autocomplete="off">
@@ -234,6 +243,8 @@ document.querySelectorAll(".account").forEach((item) => {
   const codeEl = otpStep.querySelector(".code");
   const statusEl = otpStep.querySelector(".otp-status");
   const copyOtp = otpStep.querySelector(".copy-otp");
+  const badge = item.querySelector(".badge-error");
+  const editForm = item.querySelector(".edit-form");
   const state = { code: null, startedAt: null, timer: null, inFlight: false };
 
   function stopPolling() {
@@ -265,6 +276,15 @@ document.querySelectorAll(".account").forEach((item) => {
       return;
     }
 
+    badge.hidden = !data.login_error;
+    if (data.login_error) {
+      // Polling can't help until the code is fixed.
+      stopPolling();
+      statusEl.className = "err otp-status";
+      statusEl.textContent = data.error;
+      editForm.hidden = false;
+      return;
+    }
     if (data.error) {
       if (waiting) {
         statusEl.className = "muted otp-status";
@@ -339,6 +359,12 @@ document.querySelectorAll(".account").forEach((item) => {
   if (copyPin) copyPin.addEventListener("click", () => copyText(copyPin, item.dataset.pin));
 
   copyOtp.addEventListener("click", () => state.code && copyText(copyOtp, state.code));
+  editForm.addEventListener("submit", () => {
+    const btn = editForm.querySelector("button[type=submit]");
+    btn.disabled = true;
+    btn.textContent = "Saving…";
+  });
+
   const copyAppPassword = item.querySelector(".copy-app-password");
   copyAppPassword.addEventListener("click", () =>
     copyText(copyAppPassword, item.dataset.appPassword));
@@ -347,7 +373,6 @@ document.querySelectorAll(".account").forEach((item) => {
     else startPolling();
   });
 
-  const editForm = item.querySelector(".edit-form");
   item.querySelector(".edit").addEventListener("click", () => (editForm.hidden = !editForm.hidden));
   item.querySelector(".cancel-edit").addEventListener("click", () => (editForm.hidden = true));
 

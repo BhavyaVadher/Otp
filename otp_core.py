@@ -34,6 +34,10 @@ class OtpFetchError(Exception):
     """Raised for any expected failure (bad login, no emails found, etc.)."""
 
 
+class GmailLoginError(OtpFetchError):
+    """Gmail rejected the address / app password (as opposed to a network error)."""
+
+
 @dataclass
 class OtpResult:
     when: datetime
@@ -89,16 +93,24 @@ def extract_code(subject: str, body: str) -> str | None:
     return match.group(1) if match else None
 
 
-def check_login(gmail_address: str, app_password: str) -> None:
-    """Raise OtpFetchError if the credentials can't log into Gmail."""
+def _login(gmail_address: str, app_password: str) -> imaplib.IMAP4_SSL:
     try:
         imap = imaplib.IMAP4_SSL(IMAP_HOST)
-        imap.login(gmail_address, app_password)
-    except imaplib.IMAP4.error as exc:
-        raise OtpFetchError(f"Login failed: {exc}") from exc
     except OSError as exc:
         raise OtpFetchError(f"Could not connect to Gmail: {exc}") from exc
-    imap.logout()
+    try:
+        imap.login(gmail_address, app_password)
+    except imaplib.IMAP4.error as exc:
+        raise GmailLoginError(f"Login failed: {exc}") from exc
+    except OSError as exc:
+        raise OtpFetchError(f"Could not connect to Gmail: {exc}") from exc
+    return imap
+
+
+def check_login(gmail_address: str, app_password: str) -> None:
+    """Raise GmailLoginError if Gmail rejects the credentials, OtpFetchError if
+    Gmail can't be reached."""
+    _login(gmail_address, app_password).logout()
 
 
 def fetch_latest_otp(
@@ -112,14 +124,7 @@ def fetch_latest_otp(
     Raises OtpFetchError on any expected failure (bad credentials, no
     matching emails, etc.) with a message safe to show to the caller.
     """
-    try:
-        imap = imaplib.IMAP4_SSL(IMAP_HOST)
-        imap.login(gmail_address, app_password)
-    except imaplib.IMAP4.error as exc:
-        raise OtpFetchError(f"Login failed: {exc}") from exc
-    except OSError as exc:
-        raise OtpFetchError(f"Could not connect to Gmail: {exc}") from exc
-
+    imap = _login(gmail_address, app_password)
     try:
         imap.select("INBOX", readonly=True)
 

@@ -47,7 +47,7 @@ from telegram import Update
 
 import db
 from bot import ALLOWED_IDS, build_application
-from otp_core import OtpFetchError, check_login, fetch_latest_otp
+from otp_core import GmailLoginError, OtpFetchError, check_login, fetch_latest_otp
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -88,6 +88,7 @@ WEBHOOK_SECRET = hashlib.sha256(f"webhook:{TELEGRAM_BOT_TOKEN}".encode()).hexdig
 
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 PIN_RE = re.compile(r"^\d{6}$")
+WRONG_CODE_MSG = "Gmail rejected the email or 16-digit code. Tap Edit to fix it."
 # Starting from the Canadian site makes the login page use Canada (no country picker).
 AMAZON_LOGIN_URL = "https://hiring.amazon.ca/app#/login"
 
@@ -262,34 +263,82 @@ def add_account(
     elif amazon_pin and not PIN_RE.match(amazon_pin):
         _flash(request, "Amazon PIN must be exactly 6 digits.")
     else:
+        # A wrong code doesn't block saving: the client is kept and marked so it
+        # can be fixed with Edit instead of being typed in again.
+        login_error, verified = _verify_login(email, app_password)
         try:
-            check_login(email, app_password)
-            db.add_account(owner, name, email, app_password, amazon_pin or None)
-            _flash(request, f"Saved {name}.", "success")
-        except OtpFetchError as exc:
-            _flash(request, f"Not saved - {exc}")
+            db.add_account(owner, name, email, app_password, amazon_pin or None, login_error)
         except db.DuplicateAccountError as exc:
             _flash(request, str(exc))
+        else:
+            if login_error:
+                _flash(request, f"Saved {name} - {WRONG_CODE_MSG}")
+            elif not verified:
+                _flash(request, f"Saved {name}, but Gmail couldn't be reached to check the login.")
+            else:
+                _flash(request, f"Saved {name}.", "success")
     return RedirectResponse("/", status_code=303)
+
+
+def _verify_login(email: str, app_password: str) -> tuple[str | None, bool]:
+    """Returns (login_error, verified). A network problem is neither an error
+    nor a verification."""
+    try:
+        check_login(email, app_password)
+    except GmailLoginError:
+        return WRONG_CODE_MSG, True
+    except OtpFetchError:
+        return None, False
+    return None, True
 
 
 @app.post("/accounts/{account_id}/edit")
 def edit_account(
-    request: Request, account_id: int, name: str = Form(""), amazon_pin: str = Form("")
+    request: Request,
+    account_id: int,
+    name: str = Form(""),
+    email: str = Form(""),
+    app_password: str = Form(""),
+    amazon_pin: str = Form(""),
 ):
     owner = _current_admin(request)
     if owner is None:
         return RedirectResponse("/login", status_code=303)
+    found = db.get_credentials(owner, account_id)
+    if found is None:
+        _flash(request, "Account not found.")
+        return RedirectResponse("/", status_code=303)
+    current, current_password = found
 
     name = name.strip()
+    email = email.strip().lower()
     amazon_pin = amazon_pin.strip()
+    # Blank means "keep the current code".
+    app_password = re.sub(r"\s+", "", app_password) or None
     if not name:
         _flash(request, "Name can't be empty.")
+    elif not EMAIL_RE.match(email):
+        _flash(request, "That doesn't look like a valid email address.")
+    elif app_password is not None and len(app_password) != 16:
+        _flash(request, "App password must be 16 characters (spaces are ignored).")
     elif amazon_pin and not PIN_RE.match(amazon_pin):
         _flash(request, "Amazon PIN must be exactly 6 digits.")
     else:
-        db.update_account(owner, account_id, name, amazon_pin or None)
-        _flash(request, f"Updated {name}.", "success")
+        try:
+            db.update_account(owner, account_id, name, email, amazon_pin or None, app_password)
+        except db.DuplicateAccountError as exc:
+            _flash(request, str(exc))
+            return RedirectResponse("/", status_code=303)
+        message, kind = f"Updated {name}.", "success"
+        if email != current.email or app_password is not None:
+            login_error, verified = _verify_login(email, app_password or current_password)
+            if verified:
+                db.set_login_error(owner, account_id, login_error)
+            if login_error:
+                message, kind = f"Updated {name} - {WRONG_CODE_MSG}", "error"
+            elif verified:
+                message = f"Updated {name}. Gmail login works."
+        _flash(request, message, kind)
     return RedirectResponse("/", status_code=303)
 
 
@@ -339,12 +388,17 @@ def account_otp(request: Request, account_id: int):
 
     try:
         results = fetch_latest_otp(account.email, app_password, max_results=1)
+    except GmailLoginError:
+        db.set_login_error(owner, account_id, WRONG_CODE_MSG)
+        return JSONResponse({"error": WRONG_CODE_MSG, "login_error": True})
     except OtpFetchError as exc:
+        db.set_login_error(owner, account_id, None)  # the login itself worked
         return JSONResponse({"error": str(exc)})
     except Exception:
         log.exception("Unexpected error fetching OTP for %s", account.email)
         return JSONResponse({"error": "Unexpected error while checking that inbox."})
 
+    db.set_login_error(owner, account_id, None)
     latest = results[0]
     age = (datetime.now(timezone.utc) - latest.when).total_seconds()
     return {
