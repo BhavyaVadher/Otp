@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Autofill setup · OTP Desk{% endblock %}
+{% block body %}
+<style>
+  .status { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
+  .status.on .dot { background: var(--success); }
+  .card + .card { margin-top: 12px; }
+  ol.how { margin: 0; padding-left: 20px; }
+  ol.how li { margin-bottom: 8px; }
+  .script-link { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; overflow-wrap: anywhere; }
+  .note { margin-top: 16px; }
+</style>
+
+<header>
+  <h1>Amazon.ca autofill</h1>
+  <a class="btn-plain btn-sm" href="/">← Clients</a>
+</header>
+
+<div class="card status" id="status">
+  <span class="dot"></span>
+  <span id="status-text">Checking this browser…</span>
+</div>
+
+<div class="card">
+  <h2>What it does</h2>
+  <ol class="how">
+    <li>You tap <strong>Copy &amp; open Amazon.ca</strong> on a client.</li>
+    <li>On Amazon it fills in that client's <strong>email</strong> and taps <strong>Continue</strong>.</li>
+    <li>On the next page it fills in the <strong>6-digit PIN</strong> and <strong>stops</strong>. You check it, continue, and paste the OTP from here.</li>
+  </ol>
+  <p class="muted">The email and PIN are passed over only when you tap the button and are forgotten after 3 minutes.</p>
+</div>
+
+<div class="card">
+  <h2>iPhone (Safari)</h2>
+  <ol class="how">
+    <li>Install the free <strong>Userscripts</strong> app from the App Store. Open it once and pick a folder when it asks where to save scripts.</li>
+    <li>Open <strong>Settings → Apps → Safari → Extensions → Userscripts</strong>, turn it on, and allow it on <strong>All Websites</strong>.</li>
+    <li>In <strong>Safari</strong>, open the script link below. Tap the <strong>Aa</strong> (or puzzle) icon in the address bar → <strong>Userscripts</strong> → <strong>Install</strong>.</li>
+    <li>Use OTP Desk in <strong>Safari</strong> from now on. Chrome on iPhone can't run scripts.</li>
+  </ol>
+</div>
+
+<div class="card">
+  <h2>Computer (Chrome)</h2>
+  <ol class="how">
+    <li>Install the free <strong>Tampermonkey</strong> extension from the Chrome Web Store.</li>
+    <li>Go to <code>chrome://extensions</code> → <strong>Tampermonkey</strong> → <strong>Details</strong> and turn on <strong>Allow User Scripts</strong> (newer Chrome versions need this).</li>
+    <li>Open the script link below. Tampermonkey shows an install page → click <strong>Install</strong>.</li>
+  </ol>
+</div>
+
+<div class="card">
+  <h2>Script link</h2>
+  <div class="script-link">
+    <code id="script-url">{{ script_url }}</code>
+    <a class="btn btn-sm" href="{{ script_url }}">Open</a>
+    <button class="btn-plain btn-sm" type="button" id="copy-link">Copy link</button>
+  </div>
+  <p class="muted">Installed scripts update themselves when the website changes.</p>
+</div>
+
+<p class="muted note">If Amazon changes its login page, the autofill may stop working until the script is updated. Everything else on OTP Desk keeps working either way.</p>
+
+<script>
+// The script marks this page when it's running in this browser.
+setTimeout(() => {
+  const on = document.documentElement.dataset.otpAutofill === "1";
+  document.getElementById("status").classList.toggle("on", on);
+  document.getElementById("status-text").textContent = on
+    ? "Autofill is installed and active in this browser."
+    : "Autofill isn't installed in this browser yet.";
+}, 1200);
+
+document.getElementById("copy-link").addEventListener("click", async (e) => {
+  try {
+    await navigator.clipboard.writeText(document.getElementById("script-url").textContent);
+    e.target.textContent = "Copied";
+  } catch (err) {
+    e.target.textContent = "Copy failed";
+  }
+});
+</script>
+{% endblock %}

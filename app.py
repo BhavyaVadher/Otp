@@ -171,6 +171,31 @@ def _client_ip(request: Request) -> str:
     return forwarded.split(",")[-1].strip() or (request.client.host if request.client else "?")
 
 
+def _site_url(request: Request) -> str:
+    return EXTERNAL_URL or str(request.base_url).rstrip("/")
+
+
+@app.get("/otpdesk.user.js")
+def userscript(request: Request):
+    # Public on purpose: Tampermonkey / Userscripts fetch it to install and
+    # update. It holds no client data - that's handed over at click time.
+    return templates.TemplateResponse(
+        request,
+        "otpdesk.user.js",
+        {"site": _site_url(request)},
+        media_type="text/javascript",
+    )
+
+
+@app.get("/autofill")
+def autofill_setup(request: Request):
+    if _current_admin(request) is None:
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(
+        request, "autofill.html", {"script_url": f"{_site_url(request)}/otpdesk.user.js"}
+    )
+
+
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
