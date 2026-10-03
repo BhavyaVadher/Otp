@@ -21,6 +21,8 @@
       }
     }
     * { box-sizing: border-box; }
+    /* Elements styled with their own display (e.g. inline-block badges) must still hide. */
+    [hidden] { display: none !important; }
     body {
       margin: 0; background: var(--bg); color: var(--text);
       font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
