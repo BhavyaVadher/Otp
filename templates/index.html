@@ -1,17 +1,47 @@
 {% extends "base.html" %}
 {% block body %}
 <style>
-  .accounts { list-style: none; margin: 0 0 20px; padding: 0; }
-  .account { background: var(--card); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 10px; }
+  header { flex-wrap: wrap; gap: 10px; }
+  header .who { display: flex; align-items: center; gap: 8px; }
+  header form { margin: 0; }
+
+  .toolbar {
+    position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+    background: var(--bg); padding: 8px 0 10px; margin-bottom: 4px;
+  }
+  .search-wrap { position: relative; }
+  .search-wrap svg { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); }
+  #search { margin: 0; padding-left: 38px; font-size: 16px; background: var(--card); }
+  .result-count { margin-top: 6px; }
+
+  .accounts {
+    list-style: none; margin: 0 0 20px; padding: 0;
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+  }
+  .accounts > li:not([hidden]) ~ li:not([hidden]) { border-top: 1px solid var(--border); }
+  .letter {
+    padding: 3px 14px; background: var(--bg);
+    font-size: 11px; font-weight: 700; color: var(--muted); letter-spacing: .1em;
+  }
   .account-head {
-    display: flex; width: 100%; align-items: center; gap: 12px; padding: 14px 16px;
+    display: flex; width: 100%; align-items: center; gap: 12px; padding: 10px 14px;
     background: none; border: 0; color: inherit; text-align: left;
   }
-  .account-head:hover .name { color: var(--accent); }
-  .name { font-weight: 600; }
-  .chev { margin-left: auto; color: var(--muted); transition: transform .15s; }
+  .account-head:hover { background: var(--bg); }
+  .account.open .account-head { background: var(--code-bg); }
+  .avatar {
+    flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
+    font-weight: 700; font-size: 15px; color: #fff; background: hsl(var(--hue, 220) 55% 50%);
+  }
+  .who-text { min-width: 0; flex: 1; }
+  .name { font-weight: 600; display: block; }
+  .email { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chev { color: var(--muted); transition: transform .15s; }
   .account.open .chev { transform: rotate(90deg); }
-  .panel { padding: 0 16px 16px; }
+  .panel { padding: 12px 14px 14px; }
+  .empty { text-align: center; padding: 24px 0; }
+  .add-card { margin-bottom: 16px; }
+  .add-card h2 { margin-bottom: 12px; }
 
   .steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
   .step {
@@ -40,28 +70,58 @@
   .panel-actions form { margin: 0; }
   .edit-form { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
   .edit-form .row { display: flex; gap: 8px; }
-  details summary { cursor: pointer; font-weight: 600; }
-  details[open] summary { margin-bottom: 12px; }
 </style>
 
 <header>
   <h1>OTP Desk</h1>
-  <form method="post" action="/logout">
+  <div class="who">
     <span class="muted">{{ admin }}</span>
-    <button class="btn-plain" type="submit">Log out</button>
-  </form>
+    <button class="btn btn-sm" type="button" id="toggle-add">+ Add client</button>
+    <form method="post" action="/logout"><button class="btn-plain btn-sm" type="submit">Log out</button></form>
+  </div>
 </header>
 
 {% if flash %}<div class="flash {{ flash.kind }}">{{ flash.message }}</div>{% endif %}
 
+<div class="card add-card" id="add-card" {% if accounts %}hidden{% endif %}>
+  <h2>Add client</h2>
+  <form method="post" action="/accounts" id="add-form">
+    <label for="name">Name</label>
+    <input id="name" name="name" placeholder="e.g. Rahul" autocomplete="off">
+    <label for="email">Gmail address</label>
+    <input id="email" name="email" type="email" required autocomplete="off">
+    <label for="app_password">16-character App Password</label>
+    <input id="app_password" name="app_password" required autocomplete="off" placeholder="abcd efgh ijkl mnop">
+    <label for="amazon_pin">6-digit Amazon PIN (optional)</label>
+    <input id="amazon_pin" name="amazon_pin" inputmode="numeric" pattern="\d{6}" maxlength="6" autocomplete="off">
+    <button class="btn" type="submit">Save</button>
+    <span class="muted" style="margin-left: 8px;">The Gmail login is checked before saving.</span>
+  </form>
+</div>
+
 {% if accounts %}
+<div class="toolbar">
+  <div class="search-wrap">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <input type="search" id="search" placeholder="Search {{ accounts|length }} clients by name or email"
+           autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Search clients">
+  </div>
+  <div class="muted result-count" id="result-count" hidden></div>
+</div>
+
+<p class="muted empty" id="no-results" hidden>No client matches that search.</p>
+
 <ul class="accounts">
-  {% for a in accounts %}
-  <li class="account" data-id="{{ a.id }}" data-email="{{ a.email }}" data-pin="{{ a.amazon_pin or '' }}">
+  {% for letter, items in groups %}
+  <li class="letter" aria-hidden="true">{{ letter }}</li>
+  {% for a in items %}
+  <li class="account" data-id="{{ a.id }}" data-email="{{ a.email }}" data-pin="{{ a.amazon_pin or '' }}"
+      data-search="{{ (a.name ~ ' ' ~ a.email)|lower }}">
     <button class="account-head" type="button" aria-expanded="false">
-      <span>
-        <span class="name">{{ a.name }}</span><br>
-        <span class="muted">{{ a.email }}</span>
+      <span class="avatar" aria-hidden="true">{{ a.name[:1]|upper }}</span>
+      <span class="who-text">
+        <span class="name">{{ a.name|title }}</span>
+        <span class="muted email">{{ a.email }}</span>
       </span>
       <span class="chev" aria-hidden="true">›</span>
     </button>
@@ -80,14 +140,13 @@
           <div class="step-body">
             <div class="step-label">6-digit PIN</div>
             {% if a.amazon_pin %}
-            <div class="step-value pin">••••••</div>
+            <div class="step-value pin">{{ a.amazon_pin }}</div>
             {% else %}
             <div class="muted">No PIN saved - tap Edit to add it</div>
             {% endif %}
           </div>
           {% if a.amazon_pin %}
           <div class="step-actions">
-            <button class="btn-plain btn-sm show-pin" type="button">Show</button>
             <button class="btn btn-sm copy-pin" type="button">Copy</button>
           </div>
           {% endif %}
@@ -131,26 +190,11 @@
     </div>
   </li>
   {% endfor %}
+  {% endfor %}
 </ul>
 {% else %}
-<p class="muted">No accounts saved yet. Add one below.</p>
+<p class="muted empty">No clients saved yet. Add your first one above.</p>
 {% endif %}
-
-<details class="card" {% if not accounts %}open{% endif %}>
-  <summary>Add account</summary>
-  <form method="post" action="/accounts" id="add-form">
-    <label for="name">Name</label>
-    <input id="name" name="name" placeholder="e.g. Rahul" autocomplete="off">
-    <label for="email">Gmail address</label>
-    <input id="email" name="email" type="email" required autocomplete="off">
-    <label for="app_password">16-character App Password</label>
-    <input id="app_password" name="app_password" required autocomplete="off" placeholder="abcd efgh ijkl mnop">
-    <label for="amazon_pin">6-digit Amazon PIN (optional)</label>
-    <input id="amazon_pin" name="amazon_pin" inputmode="numeric" pattern="\d{6}" maxlength="6" autocomplete="off">
-    <button class="btn" type="submit">Save</button>
-    <span class="muted" style="margin-left: 8px;">The Gmail login is checked before saving.</span>
-  </form>
-</details>
 
 <script>
 const POLL_MS = 5000;
@@ -257,13 +301,27 @@ document.querySelectorAll(".account").forEach((item) => {
     loadOtp();
   }
 
-  head.addEventListener("click", () => {
-    const opening = panel.hidden;
+  function setOpen(opening) {
     panel.hidden = !opening;
     item.classList.toggle("open", opening);
     head.setAttribute("aria-expanded", String(opening));
     if (opening) loadOtp();
     else stopPolling();
+  }
+  item.setOpen = setOpen;
+
+  // Avatar color comes from the name, so each client keeps the same color.
+  let hash = 0;
+  for (const ch of item.dataset.search) hash = (hash * 31 + ch.charCodeAt(0)) % 360;
+  item.querySelector(".avatar").style.setProperty("--hue", hash);
+
+  head.addEventListener("click", () => {
+    const opening = panel.hidden;
+    // Only one client open at a time.
+    if (opening) {
+      document.querySelectorAll(".account.open").forEach((other) => other.setOpen(false));
+    }
+    setOpen(opening);
   });
 
   // Step 1: copy the email, let the link open Amazon in a new tab, and start
@@ -273,17 +331,8 @@ document.querySelectorAll(".account").forEach((item) => {
     startPolling();
   });
 
-  const showPin = item.querySelector(".show-pin");
-  if (showPin) {
-    const pinEl = item.querySelector(".pin");
-    showPin.addEventListener("click", () => {
-      const hidden = pinEl.textContent.startsWith("•");
-      pinEl.textContent = hidden ? item.dataset.pin : "••••••";
-      showPin.textContent = hidden ? "Hide" : "Show";
-    });
-    item.querySelector(".copy-pin").addEventListener("click", (e) =>
-      copyText(e.currentTarget, item.dataset.pin));
-  }
+  const copyPin = item.querySelector(".copy-pin");
+  if (copyPin) copyPin.addEventListener("click", () => copyText(copyPin, item.dataset.pin));
 
   copyOtp.addEventListener("click", () => state.code && copyText(copyOtp, state.code));
   item.querySelector(".refresh").addEventListener("click", () => {
@@ -310,6 +359,61 @@ document.querySelectorAll(".account").forEach((item) => {
     if (document.visibilityState === "visible" && state.startedAt !== null) loadOtp();
   });
 });
+
+const addCard = document.getElementById("add-card");
+document.getElementById("toggle-add").addEventListener("click", () => {
+  addCard.hidden = !addCard.hidden;
+  if (!addCard.hidden) document.getElementById("name").focus();
+});
+
+const search = document.getElementById("search");
+if (search) {
+  const items = [...document.querySelectorAll(".account")];
+  const countEl = document.getElementById("result-count");
+  const noResults = document.getElementById("no-results");
+  let autoOpenTimer = null;
+
+  function applySearch() {
+    const terms = search.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const shown = items.filter((item) => {
+      const match = terms.every((t) => item.dataset.search.includes(t));
+      item.hidden = !match;
+      if (!match && item.classList.contains("open")) item.setOpen(false);
+      return match;
+    });
+    // Hide a letter divider when none of the clients under it match.
+    document.querySelectorAll(".letter").forEach((letter) => {
+      let next = letter.nextElementSibling;
+      let any = false;
+      while (next && next.classList.contains("account")) {
+        if (!next.hidden) { any = true; break; }
+        next = next.nextElementSibling;
+      }
+      letter.hidden = !any;
+    });
+    noResults.hidden = shown.length > 0;
+    countEl.hidden = terms.length === 0;
+    countEl.textContent = `${shown.length} of ${items.length} clients`;
+
+    // A single match opens by itself once you stop typing.
+    clearTimeout(autoOpenTimer);
+    if (terms.length && shown.length === 1 && !shown[0].classList.contains("open")) {
+      autoOpenTimer = setTimeout(() => shown[0].querySelector(".account-head").click(), 500);
+    }
+  }
+
+  search.addEventListener("input", applySearch);
+  search.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { search.value = ""; applySearch(); }
+  });
+  // "/" jumps to search, like on many sites.
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "/" && !["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) {
+      e.preventDefault();
+      search.focus();
+    }
+  });
+}
 
 document.getElementById("add-form").addEventListener("submit", (e) => {
   const btn = e.target.querySelector("button");

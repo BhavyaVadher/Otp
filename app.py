@@ -24,6 +24,7 @@ Run locally:  python app.py   (then open http://localhost:8000)
 """
 import hashlib
 import hmac
+import itertools
 import logging
 import os
 import re
@@ -214,11 +215,19 @@ def index(request: Request):
     owner = _current_admin(request)
     if owner is None:
         return RedirectResponse("/login", status_code=303)
+    accounts = db.list_accounts(owner)
+    groups = [
+        (letter, list(items))
+        for letter, items in itertools.groupby(
+            accounts, key=lambda a: a.name[:1].upper() if a.name[:1].isalpha() else "#"
+        )
+    ]
     return templates.TemplateResponse(
         request,
         "index.html",
         {
-            "accounts": db.list_accounts(owner),
+            "accounts": accounts,
+            "groups": groups,
             "admin": owner,
             "copy_targets": _copy_targets(owner),
             "flash": request.session.pop("flash", None),
