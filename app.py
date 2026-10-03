@@ -88,7 +88,8 @@ WEBHOOK_SECRET = hashlib.sha256(f"webhook:{TELEGRAM_BOT_TOKEN}".encode()).hexdig
 
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 PIN_RE = re.compile(r"^\d{6}$")
-AMAZON_LOGIN_URL = "https://auth.hiring.amazon.com/#/login"
+# Starting from the Canadian site makes the login page use Canada (no country picker).
+AMAZON_LOGIN_URL = "https://hiring.amazon.ca/app#/login"
 
 # Brute-force protection for the login form: per-IP failure count.
 MAX_LOGIN_FAILURES = 5
