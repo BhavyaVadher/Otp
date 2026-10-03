@@ -54,6 +54,7 @@ class Account:
     name: str
     email: str
     amazon_pin: str | None = None
+    app_password: str | None = None
 
 
 def _fernet() -> Fernet:
@@ -131,12 +132,15 @@ def list_accounts(owner: str) -> list[Account]:
     with _connect() as conn:
         rows = conn.execute(
             _sql(
-                "SELECT id, name, email, amazon_pin_enc FROM accounts "
+                "SELECT id, name, email, amazon_pin_enc, app_password_enc FROM accounts "
                 "WHERE owner = %s ORDER BY lower(name)"
             ),
             (owner,),
         ).fetchall()
-    return [Account(id, name, email, _decrypt(pin) if pin else None) for id, name, email, pin in rows]
+    return [
+        Account(id, name, email, _decrypt(pin) if pin else None, _decrypt(app_password))
+        for id, name, email, pin, app_password in rows
+    ]
 
 
 def add_account(

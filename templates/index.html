@@ -116,6 +116,7 @@
   <li class="letter" aria-hidden="true">{{ letter }}</li>
   {% for a in items %}
   <li class="account" data-id="{{ a.id }}" data-email="{{ a.email }}" data-pin="{{ a.amazon_pin or '' }}"
+      data-app-password="{{ a.app_password }}"
       data-search="{{ (a.name ~ ' ' ~ a.email)|lower }}">
     <button class="account-head" type="button" aria-expanded="false">
       <span class="avatar" aria-hidden="true">{{ a.name[:1]|upper }}</span>
@@ -157,7 +158,10 @@
             <div class="step-label">OTP</div>
             <span class="code">—</span>
           </div>
-          <button class="btn btn-sm copy-otp" type="button" hidden>Copy</button>
+          <div class="step-actions">
+            <button class="btn-plain btn-sm copy-app-password" type="button">Copy 16-digit code</button>
+            <button class="btn btn-sm copy-otp" type="button" hidden>Copy</button>
+          </div>
           <span class="muted otp-status">Checking inbox…</span>
         </li>
       </ol>
@@ -335,6 +339,9 @@ document.querySelectorAll(".account").forEach((item) => {
   if (copyPin) copyPin.addEventListener("click", () => copyText(copyPin, item.dataset.pin));
 
   copyOtp.addEventListener("click", () => state.code && copyText(copyOtp, state.code));
+  const copyAppPassword = item.querySelector(".copy-app-password");
+  copyAppPassword.addEventListener("click", () =>
+    copyText(copyAppPassword, item.dataset.appPassword));
   item.querySelector(".refresh").addEventListener("click", () => {
     if (state.startedAt === null) loadOtp();
     else startPolling();
