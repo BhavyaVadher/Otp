@@ -27,7 +27,9 @@
     display: flex; width: 100%; align-items: center; gap: 12px; padding: 10px 14px;
     background: none; border: 0; color: inherit; text-align: left;
   }
+  .account-head { transition: background-color .12s ease; -webkit-tap-highlight-color: transparent; }
   .account-head:hover { background: var(--bg); }
+  .account-head:active { background: var(--press-strong); }
   .account.open .account-head { background: var(--code-bg); }
   .avatar {
     flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
@@ -228,9 +230,15 @@ function ago(seconds) {
 async function copyText(button, text) {
   try {
     await navigator.clipboard.writeText(text);
-    const label = button.textContent;
+    // Keep the original label even if tapped again while it says "Copied".
+    button.dataset.label ||= button.textContent;
     button.textContent = "Copied";
-    setTimeout(() => (button.textContent = label), 1500);
+    button.classList.add("copied");
+    clearTimeout(button.copiedTimer);
+    button.copiedTimer = setTimeout(() => {
+      button.textContent = button.dataset.label;
+      button.classList.remove("copied");
+    }, 1500);
   } catch (e) {
     button.textContent = "Copy failed";
   }

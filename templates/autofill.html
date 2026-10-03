@@ -78,6 +78,7 @@ document.getElementById("copy-link").addEventListener("click", async (e) => {
   try {
     await navigator.clipboard.writeText(document.getElementById("script-url").textContent);
     e.target.textContent = "Copied";
+    e.target.classList.add("copied");
   } catch (err) {
     e.target.textContent = "Copy failed";
   }

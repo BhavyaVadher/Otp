@@ -11,6 +11,7 @@
       --border: #e3e5e9; --accent: #2563eb; --accent-text: #fff;
       --danger: #dc2626; --success-bg: #ecfdf3; --success: #067647;
       --error-bg: #fef3f2; --error: #b42318; --code-bg: #f0f4ff;
+      --press: rgba(0, 0, 0, .06); --press-strong: rgba(0, 0, 0, .12);
     }
     @media (prefers-color-scheme: dark) {
       :root {
@@ -18,6 +19,7 @@
         --border: #2c3038; --accent: #4f8bff; --accent-text: #fff;
         --danger: #f87171; --success-bg: #0f2a1d; --success: #6ce9a6;
         --error-bg: #2d1515; --error: #fda29b; --code-bg: #1d2740;
+        --press: rgba(255, 255, 255, .06); --press-strong: rgba(255, 255, 255, .12);
       }
     }
     * { box-sizing: border-box; }
@@ -44,6 +46,29 @@
     .btn-plain { padding: 6px 10px; border: 1px solid var(--border); background: transparent; color: var(--text); }
     a.btn, a.btn-plain { display: inline-block; text-decoration: none; }
     .btn-danger { color: var(--danger); }
+
+    /* Press feedback: buttons sink and darken while held, like a real button. */
+    button, .btn, .btn-plain {
+      -webkit-tap-highlight-color: transparent; touch-action: manipulation; user-select: none;
+      transition: transform .08s ease, filter .12s ease, background-color .12s ease,
+                  box-shadow .12s ease, color .12s ease;
+    }
+    .btn { box-shadow: 0 1px 2px rgba(0, 0, 0, .25), inset 0 1px 0 rgba(255, 255, 255, .18); }
+    .btn:hover:not(:disabled) { filter: brightness(1.08); }
+    .btn:active:not(:disabled) {
+      transform: scale(.96) translateY(1px); filter: brightness(.9);
+      box-shadow: inset 0 2px 4px rgba(0, 0, 0, .3);
+    }
+    .btn-plain:hover:not(:disabled) { background-color: var(--press); }
+    .btn-plain:active:not(:disabled) { transform: scale(.96); background-color: var(--press-strong); }
+    button:focus-visible, .btn:focus-visible, .btn-plain:focus-visible {
+      outline: 2px solid var(--accent); outline-offset: 2px;
+    }
+    /* Brief confirmation after a copy. */
+    .btn.copied, .btn-plain.copied {
+      background-color: var(--success-bg); color: var(--success); border-color: transparent;
+      box-shadow: none; filter: none;
+    }
     .flash { padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; }
     .flash.error { background: var(--error-bg); color: var(--error); }
     .flash.success { background: var(--success-bg); color: var(--success); }
@@ -54,5 +79,9 @@
   <div class="wrap">
     {% block body %}{% endblock %}
   </div>
+<script>
+  // iPhone Safari only shows :active press styles when the page listens for touches.
+  document.addEventListener("touchstart", () => {}, { passive: true });
+</script>
 </body>
 </html>
