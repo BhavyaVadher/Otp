@@ -47,7 +47,7 @@ from telegram import Update
 
 import db
 from bot import ALLOWED_IDS, build_application
-from otp_core import GmailLoginError, OtpFetchError, check_login, fetch_latest_otp
+from otp_core import GmailLoginError, OtpFetchError, check_login, fetch_latest_otp, fetch_other_otp
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -429,6 +429,40 @@ def account_otp(request: Request, account_id: int):
     return {
         "code": latest.code,
         "timestamp": int(latest.when.timestamp()),
+        "subject": latest.subject,
+        "when": latest.when.strftime("%b %d, %I:%M:%S %p %Z"),
+        "age_seconds": max(0, int(age)),
+    }
+
+
+@app.get("/api/accounts/{account_id}/other-otp")
+def account_other_otp(request: Request, account_id: int):
+    owner = _current_admin(request)
+    if owner is None:
+        return JSONResponse({"error": "Session expired - please log in again."}, status_code=401)
+
+    found = db.get_credentials(owner, account_id)
+    if found is None:
+        return JSONResponse({"error": "Account not found."}, status_code=404)
+    account, app_password = found
+
+    try:
+        latest = fetch_other_otp(account.email, app_password)
+    except GmailLoginError:
+        db.set_login_error(owner, account_id, WRONG_CODE_MSG)
+        return JSONResponse({"error": WRONG_CODE_MSG, "login_error": True})
+    except OtpFetchError as exc:
+        db.set_login_error(owner, account_id, None)
+        return JSONResponse({"error": str(exc)})
+    except Exception:
+        log.exception("Unexpected error fetching other OTP for %s", account.email)
+        return JSONResponse({"error": "Unexpected error while checking that inbox."})
+
+    db.set_login_error(owner, account_id, None)
+    age = (datetime.now(timezone.utc) - latest.when).total_seconds()
+    return {
+        "code": latest.code,
+        "sender": latest.sender,
         "subject": latest.subject,
         "when": latest.when.strftime("%b %d, %I:%M:%S %p %Z"),
         "age_seconds": max(0, int(age)),
