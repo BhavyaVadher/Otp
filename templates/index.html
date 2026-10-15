@@ -68,8 +68,7 @@
   .step.otp.fresh .step-num { background: var(--success); color: var(--card); }
   .pin { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 2px; }
   .btn-sm { padding: 8px 12px; font-size: 14px; font-weight: 600; white-space: nowrap; }
-  .otp-status, .other-status { flex-basis: 100%; }
-  .other-code { font-size: 24px; }
+  .otp-status { flex-basis: 100%; }
   .err { color: var(--error); }
 
   .panel-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; margin-top: 10px; }
@@ -171,18 +170,6 @@
             <button class="btn btn-sm copy-otp" type="button" hidden>Copy</button>
           </div>
           <span class="muted otp-status">Checking inbox…</span>
-        </li>
-        <li class="step other-otp">
-          <span class="step-num">+</span>
-          <div class="step-body">
-            <div class="step-label">Other OTP (not Amazon)</div>
-            <span class="code other-code" hidden></span>
-          </div>
-          <div class="step-actions">
-            <button class="btn-plain btn-sm get-other" type="button">Get other OTP</button>
-            <button class="btn btn-sm copy-other" type="button" hidden>Copy</button>
-          </div>
-          <span class="muted other-status" hidden></span>
         </li>
       </ol>
 
@@ -333,44 +320,6 @@ document.querySelectorAll(".account").forEach((item) => {
     statusEl.textContent = `${ago(data.age_seconds)} · ${data.when}` +
       (data.code ? "" : " · no code found in this email");
   }
-
-  const otherStep = item.querySelector(".step.other-otp");
-  const otherCode = otherStep.querySelector(".other-code");
-  const otherStatus = otherStep.querySelector(".other-status");
-  const getOther = otherStep.querySelector(".get-other");
-  const copyOther = otherStep.querySelector(".copy-other");
-  let otherValue = null;
-
-  getOther.addEventListener("click", async () => {
-    getOther.disabled = true;
-    copyOther.hidden = true;
-    otherCode.hidden = true;
-    otherStatus.hidden = false;
-    otherStatus.className = "muted other-status";
-    otherStatus.textContent = "Checking inbox…";
-    let data;
-    try {
-      const res = await fetch(`/api/accounts/${item.dataset.id}/other-otp`, { cache: "no-store" });
-      if (res.status === 401) { location.href = "/login"; return; }
-      data = await res.json();
-    } catch (e) {
-      data = { error: "Network error - try again." };
-    } finally {
-      getOther.disabled = false;
-    }
-    if (data.error) {
-      otherStatus.className = "err other-status";
-      otherStatus.textContent = data.error;
-      if (data.login_error) { badge.hidden = false; editForm.hidden = false; }
-      return;
-    }
-    otherValue = data.code;
-    otherCode.textContent = data.code;
-    otherCode.hidden = false;
-    copyOther.hidden = false;
-    otherStatus.textContent = `${data.sender} · ${ago(data.age_seconds)} · ${data.when}`;
-  });
-  copyOther.addEventListener("click", () => copyText(copyOther, otherValue));
 
   function startPolling() {
     stopPolling();

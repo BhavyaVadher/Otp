@@ -25,14 +25,7 @@ OTP_SUBJECT_HINTS = (
     "otp",
     "sign-in code",
     "security code",
-    "passcode",
-    "login code",
-    "confirmation code",
-    "authentication code",
 )
-
-# How many of the newest inbox messages fetch_other_otp looks through.
-OTHER_SCAN_LIMIT = 30
 
 CODE_PATTERN = re.compile(r"\b(\d{4,8})\b")
 
@@ -50,7 +43,6 @@ class OtpResult:
     when: datetime
     code: str | None
     subject: str
-    sender: str = ""
 
 
 def decode_str(value) -> str:
@@ -99,18 +91,6 @@ def extract_code(subject: str, body: str) -> str | None:
                 return match.group(1)
     match = CODE_PATTERN.search(text)
     return match.group(1) if match else None
-
-
-def _looks_like_otp(subject: str, msg: email.message.Message) -> bool:
-    if any(hint in subject.lower() for hint in OTP_SUBJECT_HINTS):
-        return True
-    body_preview = get_body_text(msg)[:500].lower()
-    return any(hint in body_preview for hint in OTP_SUBJECT_HINTS)
-
-
-def _sender_name(msg: email.message.Message) -> str:
-    name, address = email.utils.parseaddr(decode_str(msg.get("From")))
-    return name or address
 
 
 def _login(gmail_address: str, app_password: str) -> imaplib.IMAP4_SSL:
@@ -170,8 +150,10 @@ def fetch_latest_otp(
             msg = email.message_from_bytes(raw_email)
 
             subject = decode_str(msg.get("Subject"))
-            if not _looks_like_otp(subject, msg):
-                continue
+            if not any(hint in subject.lower() for hint in OTP_SUBJECT_HINTS):
+                body_preview = get_body_text(msg)[:500].lower()
+                if not any(hint in body_preview for hint in OTP_SUBJECT_HINTS):
+                    continue
 
             date_tuple = email.utils.parsedate_to_datetime(msg.get("Date"))
             candidates.append((date_tuple, msg, subject))
@@ -189,50 +171,5 @@ def fetch_latest_otp(
             code = extract_code(subject, body)
             results.append(OtpResult(when=when.astimezone(EST), code=code, subject=subject))
         return results
-    finally:
-        imap.logout()
-
-
-def fetch_other_otp(
-    gmail_address: str,
-    app_password: str,
-    lookback_days: int = 1,
-) -> OtpResult:
-    """Return the most recent OTP email from any sender except Amazon.
-
-    Only the newest OTHER_SCAN_LIMIT inbox messages are checked, so a busy
-    inbox stays fast. Raises OtpFetchError like fetch_latest_otp.
-    """
-    imap = _login(gmail_address, app_password)
-    try:
-        imap.select("INBOX", readonly=True)
-
-        since = (date.today() - timedelta(days=lookback_days)).strftime("%d-%b-%Y")
-        status, data = imap.search(None, f"(SINCE {since})")
-        ids = data[0].split() if status == "OK" and data and data[0] else []
-
-        # IMAP ids go up with arrival order, so walk from the newest.
-        for msg_id in reversed(ids[-OTHER_SCAN_LIMIT:]):
-            status, msg_data = imap.fetch(msg_id, "(BODY.PEEK[])")
-            if status != "OK" or not msg_data or not msg_data[0]:
-                continue
-            msg = email.message_from_bytes(msg_data[0][1])
-
-            from_header = decode_str(msg.get("From")).lower()
-            if any(hint in from_header for hint in AMAZON_SENDER_HINTS):
-                continue
-            subject = decode_str(msg.get("Subject"))
-            if not _looks_like_otp(subject, msg):
-                continue
-            code = extract_code(subject, get_body_text(msg))
-            if not code:
-                continue
-
-            when = email.utils.parsedate_to_datetime(msg.get("Date"))
-            return OtpResult(
-                when=when.astimezone(EST), code=code, subject=subject, sender=_sender_name(msg)
-            )
-
-        raise OtpFetchError("No recent non-Amazon OTP email found.")
     finally:
         imap.logout()
