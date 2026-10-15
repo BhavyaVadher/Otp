@@ -130,24 +130,26 @@ def fetch_latest_otp(
 
         since = (date.today() - timedelta(days=lookback_days)).strftime("%d-%b-%Y")
 
-        ids = set()
-        for hint in AMAZON_SENDER_HINTS:
-            status, data = imap.search(None, f'(SINCE {since} FROM "{hint}")')
-            if status == "OK" and data and data[0]:
-                ids.update(data[0].split())
+        # One search for all Amazon senders instead of one round trip each.
+        criteria = f"FROM \"{AMAZON_SENDER_HINTS[-1]}\""
+        for hint in reversed(AMAZON_SENDER_HINTS[:-1]):
+            criteria = f'OR FROM "{hint}" {criteria}'
+        status, data = imap.search(None, f"(SINCE {since} {criteria})")
+        ids = data[0].split() if status == "OK" and data and data[0] else []
 
         if not ids:
             raise OtpFetchError(
                 f"No recent Amazon emails found in the last {lookback_days} day(s)."
             )
 
+        # IMAP ids grow with arrival order: check the newest first and stop as
+        # soon as enough OTP emails are found, instead of downloading them all.
         candidates = []
-        for msg_id in ids:
-            status, msg_data = imap.fetch(msg_id, "(RFC822)")
+        for msg_id in reversed(sorted(ids, key=int)):
+            status, msg_data = imap.fetch(msg_id, "(BODY.PEEK[])")
             if status != "OK" or not msg_data or not msg_data[0]:
                 continue
-            raw_email = msg_data[0][1]
-            msg = email.message_from_bytes(raw_email)
+            msg = email.message_from_bytes(msg_data[0][1])
 
             subject = decode_str(msg.get("Subject"))
             if not any(hint in subject.lower() for hint in OTP_SUBJECT_HINTS):
@@ -157,6 +159,8 @@ def fetch_latest_otp(
 
             date_tuple = email.utils.parsedate_to_datetime(msg.get("Date"))
             candidates.append((date_tuple, msg, subject))
+            if len(candidates) >= max_results:
+                break
 
         if not candidates:
             raise OtpFetchError(
